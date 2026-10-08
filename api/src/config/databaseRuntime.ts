@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import {
   DatabaseConnectionConfig,
   DatabaseProfile,
@@ -76,7 +77,11 @@ export function readDatabaseRuntimeState(): DatabaseRuntimeState {
 
 export function writeDatabaseRuntimeState(state: DatabaseRuntimeState): void {
   ensureRuntimeDir();
-  fs.writeFileSync(runtimeConfigPath, JSON.stringify(state, null, 2));
+  const temporaryPath = `${runtimeConfigPath}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+    fs.renameSync(temporaryPath, runtimeConfigPath);
+  } finally { fs.rmSync(temporaryPath, { force: true }); }
 }
 
 export function sanitizeDatabaseProfile(profile: DatabaseProfile): SanitizedDatabaseProfile {

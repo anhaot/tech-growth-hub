@@ -58,6 +58,7 @@ const countLabels: Record<keyof DatabaseCounts, string> = {
   users: '用户',
   categories: '分类',
   questions: '题目',
+  question_versions: '题目版本',
   learning_progress: '学习记录',
   review_states: '复习状态',
   review_events: '复习事件',

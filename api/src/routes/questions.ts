@@ -6,6 +6,8 @@ import { authMiddleware, AuthRequest, getLibraryOwnerId, hasCategoryScopeAccess,
 import { Question, LearningProgress, PaginatedResult, QuestionFilter, TagSummary, TagHealthPair, TagHealthReport, User } from '../types/index.js';
 import { normalizeTagName, normalizeTagsInput, parseStoredTags, parseTagAliasMap } from '../utils/tags.js';
 
+import { scanDuplicates } from '../services/questionDuplicates.js';
+
 const router = Router();
 router.use(authMiddleware, requirePermission('question_view', '没有查看题目权限'));
 
@@ -34,44 +36,6 @@ function simplifyTag(tag: string): string {
   return tag.replace(/[\s\-_./]/g, '');
 }
 
-function normalizeQuestionText(text: string): string {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[`~!@#$%^&*()_=+[\]{}\\|;:'",.<>/?，。！？；：“”‘’、（）【】《》\s-]/g, '');
-}
-
-function buildBigrams(text: string): Set<string> {
-  const normalized = normalizeQuestionText(text);
-  if (normalized.length < 2) {
-    return new Set(normalized ? [normalized] : []);
-  }
-
-  const result = new Set<string>();
-  for (let index = 0; index < normalized.length - 1; index++) {
-    result.add(normalized.slice(index, index + 2));
-  }
-
-  return result;
-}
-
-function diceCoefficient(left: string, right: string): number {
-  const leftSet = buildBigrams(left);
-  const rightSet = buildBigrams(right);
-
-  if (leftSet.size === 0 || rightSet.size === 0) {
-    return 0;
-  }
-
-  let intersection = 0;
-  for (const token of leftSet) {
-    if (rightSet.has(token)) {
-      intersection += 1;
-    }
-  }
-
-  return (2 * intersection) / (leftSet.size + rightSet.size);
-}
-
 const createQuestionSchema = z.object({
   title: z.string().min(1).max(500),
   content: z.string().min(1),
@@ -90,6 +54,8 @@ const updateQuestionSchema = z.object({
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
   categoryId: z.string().optional().nullable(),
   tags: z.array(z.string()).optional(),
+  expectedRevision: z.number().int().min(1).optional(),
+  source: z.enum(['edit', 'ai-polish', 'ai-answer']).optional(),
 });
 
 const batchDeleteSchema = z.object({
@@ -105,7 +71,7 @@ const batchTagsSchema = z.object({
 const mergeDuplicateSchema = z.object({
   keepId: z.string().uuid(),
   removeId: z.string().uuid(),
-});
+}).refine((data) => data.keepId !== data.removeId, '不能将题目与自身合并');
 
 const renameTagSchema = z.object({
   fromTag: z.string().min(1).max(100),
@@ -126,11 +92,12 @@ function getAllowedCategoryIds(user: User): string[] | undefined {
 
 async function ensureAccessibleCategory(user: User, ownerId: string, categoryId: string | null | undefined) {
   if (!categoryId) {
+    if (!hasCategoryScopeAccess(user, null)) return { ok: false as const, status: 403, error: '不能操作未授权的无分类题目' };
     return { ok: true as const };
   }
 
   const category = await db.getCategoryById(categoryId);
-  if (!category || (category.user_id !== ownerId && user.role !== 'admin')) {
+  if (!category || category.user_id !== ownerId) {
     return { ok: false as const, status: 400, error: '分类不存在或不属于当前题库' };
   }
 
@@ -157,8 +124,11 @@ async function getAccessibleQuestion(user: User, questionId: string) {
 
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const pageSize = parseInt(req.query.pageSize as string) || 20;
+    const pagination = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(1000).default(20),
+    }).parse(req.query);
+    const { page, pageSize } = pagination;
     const tagQuery = req.query.tags;
     const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
     const tags = typeof tagQuery === 'string'
@@ -186,6 +156,10 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
     res.json(result);
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: '分页参数无效', details: error.errors });
+      return;
+    }
     res.status(500).json({ error: '获取题目列表失败' });
   }
 });
@@ -265,7 +239,7 @@ router.put('/tags/rename', requirePermission('tag_manage', '没有标签管理�
 
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 100000, undefined, allowedCategoryIds);
+    const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
     let updated = 0;
 
     for (const question of questions) {
@@ -279,7 +253,7 @@ router.put('/tags/rename', requirePermission('tag_manage', '没有标签管理�
           .map((tag) => (tag === fromTag ? toTag : normalizeTagName(tag)))
           .filter(Boolean)
       ));
-      await db.updateQuestion(question.id, { tags: JSON.stringify(nextTags) });
+      await db.updateQuestion(question.id, { tags: JSON.stringify(nextTags) }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
       updated += 1;
     }
 
@@ -299,7 +273,7 @@ router.delete('/tags', requirePermission('tag_manage', '没有标签管理权限
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
     const normalizedTagName = normalizeTagName(data.tagName);
-    const { questions } = await db.getQuestions(ownerId, 1, 100000, undefined, allowedCategoryIds);
+    const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
     let updated = 0;
 
     for (const question of questions) {
@@ -309,7 +283,7 @@ router.delete('/tags', requirePermission('tag_manage', '没有标签管理权限
       }
 
       const nextTags = parsedTags.filter((tag) => tag !== normalizedTagName);
-      await db.updateQuestion(question.id, { tags: JSON.stringify(nextTags) });
+      await db.updateQuestion(question.id, { tags: JSON.stringify(nextTags) }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
       updated += 1;
     }
 
@@ -328,7 +302,7 @@ router.post('/tags/normalize', requirePermission('tag_manage', '没有标签管�
     normalizeTagsSchema.parse(req.body ?? {});
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 100000, undefined, allowedCategoryIds);
+    const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
     const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
     let updated = 0;
 
@@ -336,7 +310,7 @@ router.post('/tags/normalize', requirePermission('tag_manage', '没有标签管�
       const normalizedTags = parseStoredTags(question.tags, tagAliases);
       const nextValue = JSON.stringify(normalizedTags);
       if (nextValue !== (question.tags || '[]')) {
-        await db.updateQuestion(question.id, { tags: nextValue });
+        await db.updateQuestion(question.id, { tags: nextValue }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
         updated += 1;
       }
     }
@@ -373,7 +347,7 @@ router.post('/batch-tags', requirePermission('question_batch_edit', '没有批�
 
       const nextValue = JSON.stringify(resultTags);
       if (nextValue !== (question.tags || '[]')) {
-        await db.updateQuestion(question.id, { tags: nextValue });
+        await db.updateQuestion(question.id, { tags: nextValue }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
         updated += 1;
       }
     }
@@ -388,32 +362,63 @@ router.post('/batch-tags', requirePermission('question_batch_edit', '没有批�
   }
 });
 
+type ScanResult = Awaited<ReturnType<typeof scanDuplicates>>;
+type ScanJob = { id: string; userId: string; scope: string; status: 'running' | 'completed' | 'failed'; processed: number; totalQuestions: number; createdAt: number; finishedAt?: number; result?: ScanResult };
+const scanJobs = new Map<string, ScanJob>();
+const scanScope = (user: User) => JSON.stringify([getLibraryOwnerId(user), getAllowedCategoryIds(user)]);
+function cleanupScanJobs() {
+  for (const [id, job] of scanJobs) if (Date.now() - (job.finishedAt || job.createdAt) > 15 * 60 * 1000 && job.status !== 'running') scanJobs.delete(id);
+}
+async function runScanJob(job: ScanJob, user: User) {
+  try {
+    const questions = await db.getAllQuestions(getLibraryOwnerId(user), getAllowedCategoryIds(user));
+    job.totalQuestions = questions.length;
+    job.result = await scanDuplicates(questions, (processed) => { job.processed = processed; });
+    job.status = 'completed';
+  } catch { job.status = 'failed'; }
+  finally { job.finishedAt = Date.now(); }
+}
+function createScanJob(user: User): ScanJob | null {
+  for (const [id, job] of scanJobs) if (job.userId === user.id && job.status !== 'running') scanJobs.delete(id);
+  if (scanJobs.size >= 8) return null;
+  const job: ScanJob = { id: randomUUID(), userId: user.id, scope: scanScope(user), status: 'running', processed: 0, totalQuestions: 0, createdAt: Date.now() };
+  scanJobs.set(job.id, job);
+  void runScanJob(job, user);
+  return job;
+}
+router.post('/duplicates/scan', requirePermission('duplicate_manage', '没有查重权限'), async (req: AuthRequest, res: Response) => {
+  cleanupScanJobs();
+  const active = [...scanJobs.values()].find((job) => job.userId === req.user!.id && job.status === 'running');
+  if (active) { res.json({ id: active.id }); return; }
+  const job = createScanJob(req.user!);
+  if (!job) { res.status(429).json({ error: '查重任务较多，请稍后重试' }); return; }
+  res.status(202).json({ id: job.id });
+});
+router.get('/duplicates/scan/:jobId', requirePermission('duplicate_manage', '没有查重权限'), async (req: AuthRequest, res: Response) => {
+  try {
+    cleanupScanJobs();
+    const job = scanJobs.get(req.params.jobId);
+    if (!job || job.userId !== req.user!.id || job.scope !== scanScope(req.user!)) { res.status(404).json({ error: '查重任务不存在或已失效，请重新检查' }); return; }
+    const { page, pageSize, memberPage } = z.object({ memberPage: z.coerce.number().int().min(1).default(1), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(50).default(20) }).parse(req.query);
+    const result = job.result;
+    res.json({ id: job.id, status: job.status, processed: job.processed, totalQuestions: job.totalQuestions,
+      total: result?.total || 0, available: result?.pairs.length || 0, groupTotal: result?.groups.length || 0,
+      pairs: result?.pairs.slice((page - 1) * pageSize, page * pageSize) || [], groups: result?.groups.slice((page - 1) * pageSize, page * pageSize).map((group) => ({ ...group, questions: group.questions.slice((memberPage - 1) * 20, memberPage * 20) })) || [], memberPage,
+      truncated: result?.truncated || false, page, pageSize, totalPages: Math.ceil(Math.max(result?.pairs.length || 0, result?.groups.length || 0) / pageSize), comparisons: result?.comparisons || 0 });
+  } catch (error) { res.status(error instanceof z.ZodError ? 400 : 500).json({ error: '获取查重结果失败' }); }
+});
 router.get('/duplicates/similar', requirePermission('duplicate_manage', '没有查重权限'), async (req: AuthRequest, res: Response) => {
   try {
-    const ownerId = getLibraryOwnerId(req.user!);
-    const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 5000, undefined, allowedCategoryIds);
-    const pairs: Array<{ left: Question; right: Question; titleScore: number; contentScore: number; score: number }> = [];
-
-    for (let i = 0; i < questions.length; i++) {
-      for (let j = i + 1; j < questions.length; j++) {
-        const left = questions[i];
-        const right = questions[j];
-        const titleScore = diceCoefficient(left.title, right.title);
-        const contentScore = diceCoefficient(left.content, right.content);
-        const score = Math.max(titleScore, contentScore);
-
-        if (titleScore >= 0.86 || contentScore >= 0.72) {
-          pairs.push({ left, right, titleScore, contentScore, score });
-        }
-      }
-    }
-
-    pairs.sort((a, b) => b.score - a.score);
-    res.json({ total: pairs.length, pairs: pairs.slice(0, 50) });
-  } catch (error) {
-    res.status(500).json({ error: '相似题查重失败' });
-  }
+    const { page, pageSize } = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(50).default(50) }).parse(req.query);
+    cleanupScanJobs();
+    const active = [...scanJobs.values()].find((job) => job.userId === req.user!.id && job.scope === scanScope(req.user!) && job.status === 'running');
+    const job = active || createScanJob(req.user!);
+    if (!job) { res.status(429).json({ error: '查重任务较多，请稍后重试' }); return; }
+    while (job.status === 'running') await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!job.result) { res.status(500).json({ error: '相似题查重失败' }); return; }
+    const result = job.result;
+    res.json({ total: result.total, pairs: result.pairs.slice((page - 1) * pageSize, page * pageSize), scanned: result.scanned, truncated: result.truncated, page, pageSize });
+  } catch (error) { res.status(error instanceof z.ZodError ? 400 : 500).json({ error: '相似题查重失败' }); }
 });
 
 router.post('/duplicates/merge', requirePermission('duplicate_manage', '没有查重权限'), async (req: AuthRequest, res: Response) => {
@@ -426,6 +431,8 @@ router.post('/duplicates/merge', requirePermission('duplicate_manage', '没有�
       return;
     }
 
+    if (keepQuestion.user_id !== removeQuestion.user_id) { res.status(400).json({ error: '不能合并不同题库的题目' }); return; }
+    if (!hasPermission(req.user, 'question_delete') || !hasPermission(req.user, 'question_edit_meta') || !hasPermission(req.user, 'question_edit_content')) { res.status(403).json({ error: '合并需要删除、内容和属性编辑权限' }); return; }
     const mergedTags = Array.from(new Set([...parseStoredTags(keepQuestion.tags), ...parseStoredTags(removeQuestion.tags)]));
     const keepExplanation = (keepQuestion.explanation || '').trim();
     const removeExplanation = (removeQuestion.explanation || '').trim();
@@ -434,8 +441,7 @@ router.post('/duplicates/merge', requirePermission('duplicate_manage', '没有�
       explanation: keepExplanation || removeExplanation || null,
       category_id: keepQuestion.category_id || removeQuestion.category_id,
       tags: JSON.stringify(mergedTags),
-    });
-    await db.deleteQuestion(removeQuestion.id);
+    }, { actorId: req.user!.id, source: 'merge', expectedRevision: keepQuestion.revision, removeId: removeQuestion.id });
 
     res.json({ message: '已合并题目并删除重复题', keepId: keepQuestion.id, removeId: removeQuestion.id });
   } catch (error) {
@@ -451,7 +457,8 @@ router.get('/bookmarked', async (req: AuthRequest, res: Response) => {
   try {
     const mode = (req.query.mode as string) || 'study';
     const questions = await db.getBookmarkedQuestions(req.user!.id, mode);
-    res.json(questions);
+    const ownerId = getLibraryOwnerId(req.user!);
+    res.json(questions.filter((question) => question.user_id === ownerId && hasCategoryScopeAccess(req.user!, question.category_id)));
   } catch (error) {
     res.status(500).json({ error: '获取收藏题目失败' });
   }
@@ -462,7 +469,8 @@ router.get('/last-viewed', async (req: AuthRequest, res: Response) => {
     const mode = (req.query.mode as string) || 'study';
     const categoryId = req.query.categoryId as string | undefined;
     const progress = await db.getLastViewedQuestion(req.user!.id, mode, categoryId);
-    res.json(progress || null);
+    const question = progress ? await getAccessibleQuestion(req.user!, progress.question_id) : null;
+    res.json(question ? progress : null);
   } catch (error) {
     res.status(500).json({ error: '获取学习进度失败' });
   }
@@ -484,7 +492,7 @@ router.delete('/clear-all', requirePermission('question_delete', '没有删题�
     let deletedCount = 0;
 
     if (allowedCategoryIds && allowedCategoryIds.length > 0) {
-      const { questions } = await db.getQuestions(ownerId, 1, 100000, undefined, allowedCategoryIds);
+      const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
       deletedCount = await db.deleteQuestions(questions.map((question) => question.id));
     } else {
       deletedCount = await db.clearAllQuestions(ownerId);
@@ -499,27 +507,72 @@ router.delete('/clear-all', requirePermission('question_delete', '没有删题�
 router.get('/export', requirePermission('question_export', '没有导出权限'), async (req: AuthRequest, res: Response) => {
   try {
     const categoryId = req.query.categoryId as string | undefined;
-    if (!hasCategoryScopeAccess(req.user!, categoryId)) {
+    if (categoryId && !hasCategoryScopeAccess(req.user!, categoryId)) {
       res.status(403).json({ error: '没有该分类的导出权限' });
       return;
     }
 
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 10000, { categoryId }, allowedCategoryIds);
+    const first = await db.getQuestions(ownerId, 1, 1000, { categoryId }, allowedCategoryIds);
+    const questions = [...first.questions];
+    for (let page = 2; page <= Math.ceil(first.total / 1000); page++) {
+      const batch = await db.getQuestions(ownerId, page, 1000, { categoryId }, allowedCategoryIds);
+      questions.push(...batch.questions);
+    }
     
     const exportData = questions.map(q => ({
       title: q.title,
       content: q.content,
       answer: q.answer,
       explanation: q.explanation,
+      categoryId: q.category_id,
       difficulty: q.difficulty,
-      tags: q.tags,
+      tags: parseStoredTags(q.tags),
     }));
     
     res.json({ questions: exportData, total: exportData.length });
   } catch (error) {
     res.status(500).json({ error: '导出题目失败' });
+  }
+});
+
+router.get('/position/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const tags = normalizeTagsInput(req.query.tags);
+    const index = await db.getQuestionPosition(req.params.id, getLibraryOwnerId(req.user!), { categoryId: req.query.categoryId as string, tags }, getAllowedCategoryIds(req.user!));
+    res.json({ index });
+  } catch { res.status(500).json({ error: '获取题目位置失败' }); }
+});
+
+router.get('/:id/versions', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!await getAccessibleQuestion(req.user!, req.params.id)) { res.status(404).json({ error: '题目不存在' }); return; }
+    const { page, pageSize } = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) }).parse(req.query);
+    const result = await db.getQuestionVersions(req.params.id, page, pageSize, getAllowedCategoryIds(req.user!));
+    res.json({ ...result, page, pageSize, totalPages: Math.ceil(result.total / pageSize) });
+  } catch (error) {
+    res.status(error instanceof z.ZodError ? 400 : 500).json({ error: '获取版本历史失败' });
+  }
+});
+
+router.post('/:id/versions/:version/restore', async (req: AuthRequest, res: Response) => {
+  try {
+    const version = z.coerce.number().int().min(1).parse(req.params.version);
+    const { expectedRevision } = z.object({ expectedRevision: z.number().int().min(1) }).parse(req.body);
+    const question = await getAccessibleQuestion(req.user!, req.params.id);
+    if (!question) { res.status(404).json({ error: '题目不存在' }); return; }
+    const record = await db.getQuestionVersion(question.id, version);
+    if (!record) { res.status(404).json({ error: '版本不存在' }); return; }
+    const snapshot = JSON.parse(record.snapshot) as Question;
+    if (!hasPermission(req.user, 'question_edit_content') || !hasPermission(req.user, 'question_edit_meta')) { res.status(403).json({ error: '回退版本需要内容和属性编辑权限' }); return; }
+    const categoryAccess = await ensureAccessibleCategory(req.user!, question.user_id, snapshot.category_id);
+    if (!categoryAccess.ok) { res.status(categoryAccess.status).json({ error: categoryAccess.error }); return; }
+    const updated = await db.updateQuestion(question.id, snapshot, { actorId: req.user!.id, source: `restore:${version}`, expectedRevision });
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'QUESTION_CONFLICT') { res.status(409).json({ error: '题目已被修改，请刷新后再回退' }); return; }
+    res.status(error instanceof z.ZodError ? 400 : 500).json({ error: '版本回退失败' });
   }
 });
 
@@ -616,8 +669,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     }
 
     const nextCategoryId = data.categoryId !== undefined ? (data.categoryId || null) : question.category_id;
-    const ownerId = getLibraryOwnerId(req.user!);
-    const categoryAccess = await ensureAccessibleCategory(req.user!, ownerId, nextCategoryId);
+    const categoryAccess = await ensureAccessibleCategory(req.user!, question.user_id, nextCategoryId);
     if (!categoryAccess.ok) {
       res.status(categoryAccess.status).json({ error: categoryAccess.error });
       return;
@@ -629,17 +681,18 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       answer: data.answer,
       explanation: data.explanation,
       difficulty: data.difficulty,
-      category_id: data.categoryId,
+      category_id: data.categoryId === undefined ? undefined : (data.categoryId || null),
       tags: data.tags ? JSON.stringify(nextTags) : undefined,
     };
 
-    const updatedQuestion = await db.updateQuestion(req.params.id, updateData);
+    const updatedQuestion = await db.updateQuestion(req.params.id, updateData, { actorId: req.user!.id, source: data.source || 'edit', expectedRevision: data.expectedRevision ?? question.revision });
     res.json(updatedQuestion);
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: '输入验证失败', details: error.errors });
       return;
     }
+    if (error instanceof Error && error.message === 'QUESTION_CONFLICT') { res.status(409).json({ error: '题目已被修改，请刷新后再保存' }); return; }
     res.status(500).json({ error: '更新题目失败' });
   }
 });
@@ -695,7 +748,7 @@ router.post('/batch-delete', requirePermission('question_delete', '没有删题�
 
 router.post('/:id/progress', async (req: AuthRequest, res: Response) => {
   try {
-    const { mode, isBookmarked } = req.body;
+    const { mode, isBookmarked } = z.object({ mode: z.enum(['study', 'quiz']).default('study'), isBookmarked: z.boolean().optional() }).parse(req.body);
     const questionId = req.params.id;
 
     const question = await getAccessibleQuestion(req.user!, questionId);
@@ -714,16 +767,21 @@ router.post('/:id/progress', async (req: AuthRequest, res: Response) => {
       is_bookmarked: isBookmarked || false,
     };
 
-    const savedProgress = await db.upsertLearningProgress(progress);
+    const savedProgress = await db.upsertLearningProgress(progress, isBookmarked === undefined);
     res.json(savedProgress);
   } catch (error) {
-    res.status(500).json({ error: '保存进度失败' });
+    res.status(error instanceof z.ZodError ? 400 : 500).json({ error: '保存进度失败' });
   }
 });
 
 router.get('/:id/progress', async (req: AuthRequest, res: Response) => {
   try {
     const mode = (req.query.mode as string) || 'study';
+    const question = await getAccessibleQuestion(req.user!, req.params.id);
+    if (!question) {
+      res.status(404).json({ error: '题目不存在' });
+      return;
+    }
     const progress = await db.getLearningProgress(req.user!.id, req.params.id, mode);
     res.json(progress || null);
   } catch (error) {
@@ -749,15 +807,7 @@ router.get('/navigate/:id/next', async (req: AuthRequest, res: Response) => {
 
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 1000, { categoryId }, allowedCategoryIds);
-    const currentIndex = questions.findIndex(q => q.id === currentId);
-    
-    if (currentIndex === -1 || currentIndex === questions.length - 1) {
-      res.json({ nextQuestion: null });
-      return;
-    }
-
-    const nextQuestion = questions[currentIndex + 1];
+    const nextQuestion = await db.getAdjacentQuestion(currentId, ownerId, 'next', { categoryId }, allowedCategoryIds);
     res.json({ nextQuestion });
   } catch (error) {
     res.status(500).json({ error: '获取下一题失败' });
@@ -782,15 +832,7 @@ router.get('/navigate/:id/prev', async (req: AuthRequest, res: Response) => {
 
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 1000, { categoryId }, allowedCategoryIds);
-    const currentIndex = questions.findIndex(q => q.id === currentId);
-    
-    if (currentIndex <= 0) {
-      res.json({ prevQuestion: null });
-      return;
-    }
-
-    const prevQuestion = questions[currentIndex - 1];
+    const prevQuestion = await db.getAdjacentQuestion(currentId, ownerId, 'prev', { categoryId }, allowedCategoryIds);
     res.json({ prevQuestion });
   } catch (error) {
     res.status(500).json({ error: '获取上一题失败' });
@@ -800,22 +842,17 @@ router.get('/navigate/:id/prev', async (req: AuthRequest, res: Response) => {
 router.get('/navigate/random', async (req: AuthRequest, res: Response) => {
   try {
     const categoryId = req.query.categoryId as string;
-    if (!hasCategoryScopeAccess(req.user!, categoryId)) {
+    if (categoryId && !hasCategoryScopeAccess(req.user!, categoryId)) {
       res.status(403).json({ error: '没有该分类的访问权限' });
       return;
     }
 
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const { questions } = await db.getQuestions(ownerId, 1, 1000, { categoryId }, allowedCategoryIds);
-    
-    if (questions.length === 0) {
-      res.json({ randomQuestion: null });
-      return;
-    }
-
-    const randomIndex = Math.floor(Math.random() * questions.length);
-    res.json({ randomQuestion: questions[randomIndex] });
+    const first = await db.getQuestions(ownerId, 1, 1, { categoryId }, allowedCategoryIds);
+    if (!first.total) { res.json({ randomQuestion: null }); return; }
+    const selected = await db.getQuestions(ownerId, Math.floor(Math.random() * first.total) + 1, 1, { categoryId }, allowedCategoryIds);
+    res.json({ randomQuestion: selected.questions[0] || null });
   } catch (error) {
     res.status(500).json({ error: '获取随机题目失败' });
   }

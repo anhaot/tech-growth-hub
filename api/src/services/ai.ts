@@ -76,6 +76,7 @@ class OpenAICompatibleProvider implements AIProvider {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
+      validateAIBaseUrl(this.baseUrl, { role: 'admin' }, true, 'runtime');
       await assertAIBaseUrlResolvesPublic(this.baseUrl);
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -90,9 +91,8 @@ class OpenAICompatibleProvider implements AIProvider {
           max_tokens: options.maxTokens ?? 4000,
         }),
         signal: controller.signal,
+        redirect: 'error',
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const error = await response.text();
@@ -101,8 +101,6 @@ class OpenAICompatibleProvider implements AIProvider {
       const data = await response.json() as ChatCompletionResponse;
       return data.choices[0].message.content;
     } catch (error: any) {
-      clearTimeout(timeoutId);
-      
       if (error.name === 'AbortError') {
         throw new Error(`${this.name} 推理接口在 ${Math.round(this.timeout / 1000)} 秒内未响应。若模型列表可以正常读取，通常是上游账户权限、地区访问限制或托管推理服务异常，请更换网络/提供商或联系上游支持`);
       }
@@ -116,6 +114,8 @@ class OpenAICompatibleProvider implements AIProvider {
       }
       
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }

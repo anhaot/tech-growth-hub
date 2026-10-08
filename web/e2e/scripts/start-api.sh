@@ -3,8 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 API_DIR="$ROOT_DIR/api"
-DB_PATH="/tmp/tech-growth-hub-e2e.db"
-RUNTIME_CONFIG_PATH="/tmp/tech-growth-hub-e2e-runtime.json"
+TEST_API_PORT="${E2E_API_PORT:-3102}"
+DB_PATH="/tmp/tech-growth-hub-e2e-${TEST_API_PORT}.db"
+RUNTIME_CONFIG_PATH="/tmp/tech-growth-hub-e2e-runtime-${TEST_API_PORT}.json"
 MIGRATION_TARGET_PATH="/tmp/tech-growth-hub-e2e-migration.db"
 
 rm -f "$DB_PATH" "$RUNTIME_CONFIG_PATH" "$MIGRATION_TARGET_PATH"
@@ -13,7 +14,7 @@ cd "$API_DIR"
 npm run build >/dev/null
 
 exec env \
-  PORT=3102 \
+  PORT="$TEST_API_PORT" \
   NODE_ENV=test \
   TRUST_PROXY=1 \
   JWT_SECRET=e2e-secret-key \

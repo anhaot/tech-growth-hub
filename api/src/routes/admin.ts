@@ -12,8 +12,10 @@ import {
   AuthRequest,
   getLibraryOwnerId,
   requirePermission,
+  getSessionLifetime,
 } from '../middleware/auth.js';
-import { DatabaseProfile, DatabaseValidationReport, UserPermissions } from '../types/index.js';
+import { parseSessionLifetime } from '../utils/sessionLifetime.js';
+import { DatabaseProfile, DatabaseValidationReport, DatabaseTableCountSummary, UserPermissions } from '../types/index.js';
 import { parseTagAliasMap } from '../utils/tags.js';
 import {
   buildDatabaseConnectionConfig,
@@ -95,9 +97,16 @@ const migrationSchema = z.object({
 
 const backupRestoreSchema = z.object({
   dataset: z.object({
-    users: z.array(z.record(z.unknown())).optional(),
+    users: z.array(z.object({
+      id: z.string().uuid(),
+      username: z.string().min(1),
+      email: z.string().min(1),
+      password_hash: z.string().min(1),
+      role: z.enum(['admin', 'user']),
+    }).passthrough()).min(1).refine((users) => users.some((user) => user.role === 'admin'), '备份必须包含管理员账户'),
     categories: z.array(z.record(z.unknown())).optional(),
     questions: z.array(z.record(z.unknown())).optional(),
+    question_versions: z.array(z.record(z.unknown())).optional(),
     learning_progress: z.array(z.record(z.unknown())).optional(),
     review_states: z.array(z.record(z.unknown())).optional(),
     review_events: z.array(z.record(z.unknown())).optional(),
@@ -304,6 +313,7 @@ router.get('/settings', authMiddleware, adminMiddleware, async (_req: AuthReques
     res.json({
       allowRegister: allowRegister !== 'false',
       tagAliases,
+      loginSessionDuration: await getSessionLifetime(),
     });
   } catch (error) {
     res.status(500).json({ error: '获取系统设置失败' });
@@ -315,9 +325,19 @@ router.put('/settings/:key', authMiddleware, adminMiddleware, async (req: AuthRe
     const { key } = req.params;
     const data = updateSettingSchema.parse(req.body);
 
-    if (!['allow_register', 'tag_aliases'].includes(key)) {
+    if (!['allow_register', 'tag_aliases', 'login_session_duration'].includes(key)) {
       res.status(400).json({ error: '不支持的设置项' });
       return;
+    }
+
+    if (key === 'login_session_duration') {
+      try {
+        parseSessionLifetime(data.value);
+      } catch (error) {
+        res.status(400).json({ error: (error as Error).message });
+        return;
+      }
+      data.value = data.value.trim().toLowerCase();
     }
 
     await db.setSetting(key, data.value);
@@ -331,10 +351,14 @@ router.put('/settings/:key', authMiddleware, adminMiddleware, async (req: AuthRe
   }
 });
 
-router.get('/backup/export', authMiddleware, adminMiddleware, async (_req: AuthRequest, res: Response) => {
+router.get('/backup/export', authMiddleware, async (req: AuthRequest, res: Response) => {
+  if (req.user!.role !== 'admin') {
+    res.status(403).json({ error: '完整备份仅限管理员' });
+    return;
+  }
   try {
     const dataset = await db.exportAllData();
-    const counts = await db.getTableCounts();
+    const counts = Object.fromEntries(Object.entries(dataset).map(([table, rows]) => [table, rows.length]));
     res.json({
       meta: {
         exportedAt: new Date().toISOString(),
@@ -348,13 +372,18 @@ router.get('/backup/export', authMiddleware, adminMiddleware, async (_req: AuthR
   }
 });
 
-router.post('/backup/restore', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/backup/restore', authMiddleware, async (req: AuthRequest, res: Response) => {
+  if (req.user!.role !== 'admin') {
+    res.status(403).json({ error: '完整恢复仅限管理员' });
+    return;
+  }
   try {
     const data = backupRestoreSchema.parse(req.body);
     await db.replaceAllData({
       users: data.dataset.users || [],
       categories: data.dataset.categories || [],
       questions: data.dataset.questions || [],
+      question_versions: data.dataset.question_versions || [],
       learning_progress: data.dataset.learning_progress || [],
       review_states: data.dataset.review_states || [],
       review_events: data.dataset.review_events || [],
@@ -510,7 +539,7 @@ router.post('/database/profiles/:id/migrate', authMiddleware, requirePermission(
     const sourceData = await db.exportAllData();
     await targetDb.replaceAllData(sourceData);
 
-    const report = buildValidationReport(await db.getTableCounts(), await targetDb.getTableCounts());
+    const report = buildValidationReport(Object.fromEntries(Object.entries(sourceData).map(([table, rows]) => [table, rows.length])) as unknown as DatabaseTableCountSummary, await targetDb.getTableCounts());
     res.json({
       message: report.matches ? '数据迁移完成并通过校验' : '数据迁移完成，但校验发现差异',
       report,

@@ -1,416 +1,122 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import fs from 'fs';
 import multer from 'multer';
-import { parse } from 'csv-parse/sync';
-import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { db } from '../database/index.js';
-import { authMiddleware, AuthRequest, getLibraryOwnerId, hasCategoryScopeAccess, requirePermission } from '../middleware/auth.js';
-import { ImportResult, Question, User } from '../types/index.js';
-import { normalizeTagsInput, parseTagAliasMap } from '../utils/tags.js';
+import { authMiddleware, AuthRequest, getLibraryOwnerId, requirePermission } from '../middleware/auth.js';
+import { ImportResult, User } from '../types/index.js';
+import { ImportFormat, ImportInputError, ImportRow, prepareImport, validateImportCategory, MAX_IMPORT_ROWS } from '../services/questionImport.js';
 
 const router = Router();
-
-const allowedUploadExtensions = new Set(['.csv', '.json', '.md', '.markdown', '.txt']);
-
-const upload = multer({
-  dest: 'uploads/',
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req: Express.Request, file: Express.Multer.File, callback: multer.FileFilterCallback) => {
-    const extension = file.originalname.includes('.')
-      ? file.originalname.slice(file.originalname.lastIndexOf('.')).toLowerCase()
-      : '';
-
-    if (!allowedUploadExtensions.has(extension)) {
-      callback(new Error('仅支持 csv、json、md、markdown、txt 文件'));
-      return;
-    }
-
-    callback(null, true);
-  },
-});
-
-function cleanupUploadedFile(filePath?: string) {
-  if (!filePath || !fs.existsSync(filePath)) {
-    return;
-  }
-  fs.unlinkSync(filePath);
-}
-
-const normalizeDifficulty = (diff: string | undefined): 'easy' | 'medium' | 'hard' => {
-  if (!diff) return 'medium';
-  const d = diff.toLowerCase().trim();
-  if (d === 'easy' || d === '简单') return 'easy';
-  if (d === 'medium' || d === '中等') return 'medium';
-  if (d === 'hard' || d === '困难') return 'hard';
-  return 'medium';
+const extensions: Record<Exclude<ImportFormat, 'text'>, string[]> = { csv: ['.csv'], json: ['.json'], markdown: ['.md', '.markdown', '.txt'] };
+const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: (_req, file, callback) => {
+  const extension = file.originalname.slice(file.originalname.lastIndexOf('.')).toLowerCase();
+  if (!Object.values(extensions).flat().includes(extension)) { callback(new ImportInputError('仅支持 csv、json、md、markdown、txt 文件')); return; }
+  callback(null, true);
+} });
+const fileUpload = (req: AuthRequest, res: Response, next: NextFunction) => {
+  upload.single('file')(req, res, (error: unknown) => {
+    if (error) { res.status(400).json({ error: error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE' ? '文件不能超过 10 MB' : (error as Error).message }); return; }
+    next();
+  });
 };
-
-const questionImportSchema = z.object({
-  title: z.string().min(1).max(500).optional(),
-  content: z.string().min(1),
-  answer: z.string().min(1),
-  explanation: z.string().optional().default(''),
-  difficulty: z.string().optional().default('medium'),
-  categoryId: z.string().optional().nullable(),
-  tags: z.union([z.string(), z.array(z.string())]).optional().transform(v => normalizeTagsInput(v)),
-});
-
-async function validateImportCategory(user: User, ownerId: string, categoryId: string | null | undefined) {
-  if (!categoryId) {
-    return { ok: true as const };
-  }
-
-  const category = await db.getCategoryById(categoryId);
-  if (!category || (category.user_id !== ownerId && user.role !== 'admin')) {
-    return { ok: false as const, error: '分类不存在或不属于当前题库' };
-  }
-
-  if (!hasCategoryScopeAccess(user, categoryId)) {
-    return { ok: false as const, error: '没有该分类的导入权限' };
-  }
-
-  return { ok: true as const };
+router.use(authMiddleware, requirePermission('import_manage', '没有导入权限'));
+interface Preview {
+  id: string; userId: string; scope: string; expiresAt: number;
+  rows: ImportRow[]; state: 'preparing' | 'ready' | 'committing' | 'complete'; result?: ImportResult & { skipped: number };
 }
-
-router.post('/csv', authMiddleware, requirePermission('import_manage', '没有导入权限'), upload.single('file'), async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.file) {
-      res.status(400).json({ error: '请上传文件' });
-      return;
-    }
-
-    const fileContent = fs.readFileSync(req.file.path, 'utf-8');
-    const records = parse(fileContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
-
-    const result: ImportResult = { success: 0, failed: 0, errors: [] };
-    const categoryId = req.body.categoryId || null;
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const ownerId = getLibraryOwnerId(req.user!);
-
-    for (let i = 0; i < records.length; i++) {
-      try {
-        const record = records[i];
-        const content = record.content || record.内容 || '';
-        const answer = record.answer || record.答案 || '';
-        
-        if (!content || !answer) {
-          result.failed++;
-          result.errors.push({ row: i + 2, error: '题目内容或答案不能为空' });
-          continue;
-        }
-
-        const parsedData = questionImportSchema.parse({
-          title: record.title || record.标题 || content.substring(0, 100),
-          content,
-          answer,
-          explanation: record.explanation || record.解析 || '',
-          difficulty: normalizeDifficulty(record.difficulty || record.难度),
-          categoryId: categoryId || record.categoryId || record.分类ID,
-          tags: normalizeTagsInput(record.tags || record.标签 || '', tagAliases),
-        });
-
-        const categoryAccess = await validateImportCategory(req.user!, ownerId, parsedData.categoryId || null);
-        if (!categoryAccess.ok) {
-          result.failed++;
-          result.errors.push({ row: i + 2, error: categoryAccess.error });
-          continue;
-        }
-
-        const question: Question = {
-          id: randomUUID(),
-          title: parsedData.title || content.substring(0, 100),
-          content: parsedData.content,
-          answer: parsedData.answer,
-          explanation: parsedData.explanation || null,
-          difficulty: normalizeDifficulty(parsedData.difficulty),
-          category_id: parsedData.categoryId || null,
-          user_id: ownerId,
-          tags: JSON.stringify(parsedData.tags),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-
-        await db.createQuestion(question);
-        result.success++;
-      } catch (error) {
-        result.failed++;
-        const errorMsg = error instanceof z.ZodError 
-          ? error.errors.map(e => e.message).join(', ')
-          : String(error);
-        result.errors.push({ row: i + 2, error: errorMsg });
-      }
-    }
-
-    res.json(result);
-  } catch (error) {
-    console.error('CSV import error:', error);
-    res.status(500).json({ error: 'CSV导入失败: ' + (error as Error).message });
-  } finally {
-    cleanupUploadedFile(req.file?.path);
+const previews = new Map<string, Preview>();
+const PREVIEW_TTL = 15 * 60 * 1000;
+function scope(user: User) { return JSON.stringify([user.role, user.user_type, getLibraryOwnerId(user), [...user.category_scopes].sort(), user.permissions]); }
+function purgePreviews() { for (const [id, preview] of previews) if (preview.state !== 'committing' && preview.expiresAt <= Date.now()) previews.delete(id); }
+const cleanup = setInterval(purgePreviews, 60000); cleanup.unref();
+function readInput(req: AuthRequest, format: ImportFormat) {
+  if (format === 'text') return req.body.questions;
+  if (!req.file) throw new ImportInputError('请上传文件');
+  const extension = req.file.originalname.slice(req.file.originalname.lastIndexOf('.')).toLowerCase();
+  if (!extensions[format].includes(extension)) throw new ImportInputError('文件扩展名与所选格式不一致');
+  return fs.readFileSync(req.file.path, 'utf-8');
+}
+function sendError(res: Response, error: unknown) {
+  if (!(error instanceof ImportInputError)) console.error('Import error:', error);
+  res.status(error instanceof ImportInputError ? 400 : 500).json({ error: error instanceof ImportInputError ? error.message : '导入失败，请重试' });
+}
+function removeUpload(req: AuthRequest) { if (req.file) fs.rmSync(req.file.path, { force: true }); }
+async function importRows(user: User, rows: ImportRow[], excluded = new Set<number>()): Promise<ImportResult & { skipped: number }> {
+  const result = { success: 0, failed: 0, skipped: 0, errors: [] as ImportResult['errors'] };
+  const ownerId = getLibraryOwnerId(user);
+  const categories = new Map<string | null, string | undefined>();
+  for (const row of rows) {
+    if (!row.question) { result.failed++; result.errors.push({ row: row.row, error: row.error || '题目格式错误' }); continue; }
+    if (excluded.has(row.row)) { result.skipped++; continue; }
+    try {
+      const q = row.question;
+      if (!categories.has(q.categoryId)) categories.set(q.categoryId, await validateImportCategory(user, ownerId, q.categoryId));
+      const error = categories.get(q.categoryId);
+      if (error) throw new Error(error);
+      const now = new Date().toISOString();
+      await db.createQuestion({ id: randomUUID(), title: q.title, content: q.content, answer: q.answer, explanation: q.explanation || null,
+        difficulty: q.difficulty, category_id: q.categoryId, user_id: ownerId, tags: JSON.stringify(q.tags), created_at: now, updated_at: now });
+      result.success++;
+    } catch (error) { result.failed++; result.errors.push({ row: row.row, error: (error as Error).message }); }
+    if ((result.success + result.failed) % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve));
   }
+  return result;
+}
+function previewPage(preview: Preview, page = 1) {
+  const valid = preview.rows.filter(row => !!row.question).length;
+  return { id: preview.id, expiresAt: new Date(preview.expiresAt).toISOString(), total: preview.rows.length, valid, invalid: preview.rows.length - valid,
+    page, pageSize: 20, totalPages: Math.ceil(preview.rows.length / 20), rows: preview.rows.slice((page - 1) * 20, page * 20) };
+}
+function findPreview(req: AuthRequest, res: Response): Preview | undefined {
+  purgePreviews();
+  const preview = previews.get(req.params.id);
+  if (!preview || preview.userId !== req.user!.id) { res.status(404).json({ error: '预览已失效，请重新解析预览' }); return; }
+  if (preview.scope !== scope(req.user!)) { res.status(409).json({ error: '题库授权已变化，请重新解析预览' }); return; }
+  return preview;
+}
+for (const format of ['csv', 'json', 'markdown', 'text'] as const) {
+  router.post(`/preview/${format}`, ...(format === 'text' ? [] : [fileUpload]), async (req: AuthRequest, res: Response) => {
+    let preview: Preview | undefined;
+    try {
+      purgePreviews();
+      for (const [id, item] of previews) if (item.userId === req.user!.id && item.state !== 'committing' && item.state !== 'preparing') previews.delete(id);
+      if (previews.size >= 8) { res.status(429).json({ error: '预览任务较多，请稍后重试' }); return; }
+      preview = { id: randomUUID(), userId: req.user!.id, scope: scope(req.user!), expiresAt: Date.now() + PREVIEW_TTL, rows: [], state: 'preparing' };
+      previews.set(preview.id, preview);
+      preview.rows = await prepareImport(req.user!, format, readInput(req, format), req.body.categoryId);
+      preview.state = 'ready'; preview.expiresAt = Date.now() + PREVIEW_TTL;
+      res.json(previewPage(preview));
+    } catch (error) { if (preview) previews.delete(preview.id); sendError(res, error); }
+    finally { removeUpload(req); }
+  });
+  // Keep existing integrations compatible; the UI uses the two-step preview flow.
+  router.post(`/${format}`, ...(format === 'text' ? [] : [fileUpload]), async (req: AuthRequest, res: Response) => {
+    try { res.json(await importRows(req.user!, await prepareImport(req.user!, format, readInput(req, format), req.body.categoryId))); }
+    catch (error) { sendError(res, error); }
+    finally { removeUpload(req); }
+  });
+}
+router.get('/preview/:id', (req: AuthRequest, res: Response) => {
+  const preview = findPreview(req, res); if (!preview) return;
+  if (preview.state !== 'ready') { res.status(409).json({ error: '预览正在导入或已完成，请重新解析' }); return; }
+  const page = Number(req.query.page || 1);
+  if (!Number.isSafeInteger(page) || page < 1 || page > Math.ceil(preview.rows.length / 20)) { res.status(400).json({ error: '页码无效' }); return; }
+  res.json(previewPage(preview, page));
 });
-
-router.post('/json', authMiddleware, requirePermission('import_manage', '没有导入权限'), upload.single('file'), async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.file) {
-      res.status(400).json({ error: '请上传文件' });
-      return;
-    }
-
-    const fileContent = fs.readFileSync(req.file.path, 'utf-8');
-    const jsonData = JSON.parse(fileContent);
-    const questions = Array.isArray(jsonData) ? jsonData : [jsonData];
-
-    const result: ImportResult = { success: 0, failed: 0, errors: [] };
-    const categoryId = req.body.categoryId || null;
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const ownerId = getLibraryOwnerId(req.user!);
-
-    for (let i = 0; i < questions.length; i++) {
-      try {
-        const q = questions[i];
-        const content = q.content || q.内容 || '';
-        const answer = q.answer || q.答案 || '';
-        
-        if (!content || !answer) {
-          result.failed++;
-          result.errors.push({ row: i + 1, error: '题目内容或答案不能为空' });
-          continue;
-        }
-
-        const parsedData = questionImportSchema.parse({
-          title: q.title || q.标题 || content.substring(0, 100),
-          content,
-          answer,
-          explanation: q.explanation || q.解析 || '',
-          difficulty: normalizeDifficulty(q.difficulty || q.难度),
-          categoryId: categoryId || q.categoryId || q.分类ID,
-          tags: normalizeTagsInput(q.tags || q.标签 || '', tagAliases),
-        });
-
-        const categoryAccess = await validateImportCategory(req.user!, ownerId, parsedData.categoryId || null);
-        if (!categoryAccess.ok) {
-          result.failed++;
-          result.errors.push({ row: i + 1, error: categoryAccess.error });
-          continue;
-        }
-
-        const question: Question = {
-          id: randomUUID(),
-          title: parsedData.title || content.substring(0, 100),
-          content: parsedData.content,
-          answer: parsedData.answer,
-          explanation: parsedData.explanation || null,
-          difficulty: normalizeDifficulty(parsedData.difficulty),
-          category_id: parsedData.categoryId || null,
-          user_id: ownerId,
-          tags: JSON.stringify(parsedData.tags),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-
-        await db.createQuestion(question);
-        result.success++;
-      } catch (error) {
-        result.failed++;
-        const errorMsg = error instanceof z.ZodError 
-          ? error.errors.map(e => e.message).join(', ')
-          : String(error);
-        result.errors.push({ row: i + 1, error: errorMsg });
-      }
-    }
-
-    res.json(result);
-  } catch (error) {
-    console.error('JSON import error:', error);
-    res.status(500).json({ error: 'JSON导入失败: ' + (error as Error).message });
-  } finally {
-    cleanupUploadedFile(req.file?.path);
-  }
+router.post('/preview/:id/commit', async (req: AuthRequest, res: Response) => {
+  const preview = findPreview(req, res); if (!preview) return;
+  if (preview.result) { res.json(preview.result); return; }
+  if (preview.state !== 'ready') { res.status(409).json({ error: '正在处理，请勿重复提交' }); return; }
+  const parsed = z.object({ excludedRows: z.array(z.number().int().positive()).max(MAX_IMPORT_ROWS).default([]) }).safeParse(req.body);
+  const validRows = new Set(preview.rows.filter(row => row.question).map(row => row.row));
+  if (!parsed.success || parsed.data.excludedRows.some(row => !validRows.has(row))) { res.status(400).json({ error: '排除题目编号无效' }); return; }
+  const excluded = new Set(parsed.data.excludedRows);
+  if (!preview.rows.some(row => row.question && !excluded.has(row.row))) { res.status(400).json({ error: '请至少选择一道有效题目' }); return; }
+  preview.state = 'committing';
+  preview.result = await importRows(req.user!, preview.rows, excluded);
+  preview.state = 'complete'; preview.rows = []; preview.expiresAt = Date.now() + PREVIEW_TTL;
+  res.json(preview.result);
 });
-
-router.post('/markdown', authMiddleware, requirePermission('import_manage', '没有导入权限'), upload.single('file'), async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.file) {
-      res.status(400).json({ error: '请上传文件' });
-      return;
-    }
-
-    const fileContent = fs.readFileSync(req.file.path, 'utf-8');
-    const categoryId = req.body.categoryId || null;
-    const result: ImportResult = { success: 0, failed: 0, errors: [] };
-    const ownerId = getLibraryOwnerId(req.user!);
-    const categoryAccess = await validateImportCategory(req.user!, ownerId, categoryId);
-    if (!categoryAccess.ok) {
-      res.status(403).json({ error: categoryAccess.error });
-      return;
-    }
-
-    const lines = fileContent.split('\n');
-    let currentQuestion: { content: string; answer: string; explanation: string } | null = null;
-    let currentSection = 'content';
-    let questionIndex = 0;
-
-    const saveQuestion = async () => {
-      if (currentQuestion && currentQuestion.content && currentQuestion.answer) {
-        questionIndex++;
-        try {
-          const question: Question = {
-            id: randomUUID(),
-            title: currentQuestion.content.substring(0, 100),
-            content: currentQuestion.content.trim(),
-            answer: currentQuestion.answer.trim(),
-            explanation: currentQuestion.explanation.trim() || null,
-            difficulty: 'medium',
-            category_id: categoryId,
-            user_id: ownerId,
-            tags: JSON.stringify([]),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-
-          await db.createQuestion(question);
-          result.success++;
-        } catch (error) {
-          result.failed++;
-          result.errors.push({ row: questionIndex, error: String(error) });
-        }
-      }
-      currentQuestion = null;
-      currentSection = 'content';
-    };
-
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      
-      if (trimmedLine.startsWith('## ')) {
-        continue;
-      }
-
-      if (trimmedLine.startsWith('**') && trimmedLine.endsWith('**')) {
-        await saveQuestion();
-        currentQuestion = { content: '', answer: '', explanation: '' };
-        currentQuestion.content = trimmedLine.slice(2, -2);
-        currentSection = 'content';
-        continue;
-      }
-
-      if (!currentQuestion) continue;
-
-      if (trimmedLine.startsWith('答案') || trimmedLine.startsWith('答案：') || trimmedLine.startsWith('答案:')) {
-        currentSection = 'answer';
-        const answerContent = trimmedLine.replace(/^答案[：:]\s*/, '');
-        if (answerContent) {
-          currentQuestion.answer = answerContent;
-        }
-        continue;
-      }
-
-      if (trimmedLine.startsWith('解析') || trimmedLine.startsWith('解析：') || trimmedLine.startsWith('解析:')) {
-        currentSection = 'explanation';
-        const explanationContent = trimmedLine.replace(/^解析[：:]\s*/, '');
-        if (explanationContent) {
-          currentQuestion.explanation = explanationContent;
-        }
-        continue;
-      }
-
-      if (trimmedLine === '') continue;
-
-      if (currentSection === 'answer') {
-        currentQuestion.answer += (currentQuestion.answer ? '\n' : '') + trimmedLine;
-      } else if (currentSection === 'explanation') {
-        currentQuestion.explanation += (currentQuestion.explanation ? '\n' : '') + trimmedLine;
-      }
-    }
-
-    await saveQuestion();
-
-    res.json(result);
-  } catch (error) {
-    console.error('Markdown import error:', error);
-    res.status(500).json({ error: 'Markdown导入失败: ' + (error as Error).message });
-  } finally {
-    cleanupUploadedFile(req.file?.path);
-  }
-});
-
-router.post('/text', authMiddleware, requirePermission('import_manage', '没有导入权限'), async (req: AuthRequest, res: Response) => {
-  try {
-    const { questions: questionsData, categoryId } = req.body;
-    
-    if (!Array.isArray(questionsData) || questionsData.length === 0) {
-      res.status(400).json({ error: '请提供题目数据' });
-      return;
-    }
-
-    const result: ImportResult = { success: 0, failed: 0, errors: [] };
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const ownerId = getLibraryOwnerId(req.user!);
-
-    for (let i = 0; i < questionsData.length; i++) {
-      try {
-        const q = questionsData[i];
-        const content = q.content || q.内容 || '';
-        const answer = q.answer || q.答案 || '';
-        
-        if (!content || !answer) {
-          result.failed++;
-          result.errors.push({ row: i + 1, error: '题目内容或答案不能为空' });
-          continue;
-        }
-
-        const parsedData = questionImportSchema.parse({
-          title: q.title || q.标题 || content.substring(0, 100),
-          content,
-          answer,
-          explanation: q.explanation || q.解析 || '',
-          difficulty: normalizeDifficulty(q.difficulty || q.难度),
-          categoryId: categoryId || q.categoryId || q.分类ID,
-          tags: normalizeTagsInput(q.tags || q.标签 || '', tagAliases),
-        });
-
-        const categoryAccess = await validateImportCategory(req.user!, ownerId, parsedData.categoryId || null);
-        if (!categoryAccess.ok) {
-          result.failed++;
-          result.errors.push({ row: i + 1, error: categoryAccess.error });
-          continue;
-        }
-
-        const question: Question = {
-          id: randomUUID(),
-          title: parsedData.title || content.substring(0, 100),
-          content: parsedData.content,
-          answer: parsedData.answer,
-          explanation: parsedData.explanation || null,
-          difficulty: normalizeDifficulty(parsedData.difficulty),
-          category_id: parsedData.categoryId || null,
-          user_id: ownerId,
-          tags: JSON.stringify(parsedData.tags),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-
-        await db.createQuestion(question);
-        result.success++;
-      } catch (error) {
-        result.failed++;
-        const errorMsg = error instanceof z.ZodError 
-          ? error.errors.map(e => e.message).join(', ')
-          : String(error);
-        result.errors.push({ row: i + 1, error: errorMsg });
-      }
-    }
-
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: '批量导入失败' });
-  }
-});
-
 export default router;

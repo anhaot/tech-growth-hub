@@ -87,11 +87,6 @@ const AppContent: React.FC = () => {
   const authBootstrapStartedRef = useRef(false);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      setAuthReady(true);
-      return;
-    }
-
     if (authBootstrapStartedRef.current) {
       return;
     }
@@ -101,8 +96,8 @@ const AppContent: React.FC = () => {
       .then((response) => {
         setAuth(response.data);
       })
-      .catch(() => {
-        logout();
+      .catch((error) => {
+        if (error.response || !useAuthStore.getState().isAuthenticated) logout();
       })
       .finally(() => {
         setAuthReady(true);

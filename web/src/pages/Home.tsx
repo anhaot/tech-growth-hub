@@ -372,7 +372,7 @@ export const HomePage: React.FC = () => {
               { label: '待学习', value: remainingCount, unit: '道' },
               { label: '背题记录', value: stats.studyViewed, unit: '道' },
               { label: '答题记录', value: stats.quizViewed, unit: '道' },
-              { label: '累计时长', value: Math.floor(stats.studyTime / 60), unit: '小时' },
+              { label: '累计查看', value: stats.studyTime, unit: '次' },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between py-3">
                 <span className="text-sm text-slate-500">{item.label}</span>

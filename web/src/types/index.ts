@@ -47,6 +47,7 @@ export interface Category {
 }
 
 export interface Question {
+  revision?: number;
   id: string;
   title: string;
   content: string;
@@ -123,7 +124,17 @@ export interface PaginatedResult<T> {
   totalPages: number;
 }
 
+export interface ImportPreview {
+  id: string; expiresAt: string; total: number; valid: number; invalid: number;
+  page: number; pageSize: number; totalPages: number;
+  rows: Array<{ row: number; error?: string; warnings: string[]; question?: {
+    title: string; content: string; answer: string; explanation: string;
+    difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null; tags: string[];
+  } }>;
+}
+
 export interface ImportResult {
+  skipped?: number;
   success: number;
   failed: number;
   errors: Array<{ row: number; error: string }>;
@@ -164,6 +175,7 @@ export interface BackupPayload {
     users?: Record<string, unknown>[];
     categories?: Record<string, unknown>[];
     questions?: Record<string, unknown>[];
+    question_versions?: Record<string, unknown>[];
     learning_progress?: Record<string, unknown>[];
     review_states?: Record<string, unknown>[];
     review_events?: Record<string, unknown>[];
@@ -227,6 +239,7 @@ export interface DatabaseCounts {
   users: number;
   categories: number;
   questions: number;
+  question_versions: number;
   learning_progress: number;
   review_states: number;
   review_events: number;
@@ -257,4 +270,33 @@ export interface DatabaseValidationReport {
   source: DatabaseCounts;
   target: DatabaseCounts;
   matches: boolean;
+}
+
+export interface QuestionVersion {
+  id: string;
+  question_id: string;
+  version: number;
+  snapshot: string;
+  actor_id: string | null;
+  actor_name?: string | null;
+  source: string;
+  created_at: string;
+}
+
+export interface DuplicateScanResult {
+  memberPage: number;
+  id: string;
+  status: 'running' | 'completed' | 'failed';
+  processed: number;
+  totalQuestions: number;
+  total: number;
+  available: number;
+  groupTotal: number;
+  pairs: SimilarQuestionPair[];
+  groups: Array<{ title: string; count: number; questions: Question[] }>;
+  truncated: boolean;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  comparisons: number;
 }

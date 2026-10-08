@@ -2,10 +2,11 @@ import { Request, Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { config } from '../config/index.js';
 import { db } from '../database/index.js';
 import { authRateLimitMiddleware } from '../middleware/common.js';
-import { authCookieName, authMiddleware, AuthRequest, csrfCookieName, generateCsrfToken, generateToken } from '../middleware/auth.js';
+import { authMiddleware, AuthRequest, generateCsrfToken, generateToken, getSessionLifetime } from '../middleware/auth.js';
+import { clearAuthCookies, writeAuthCookies, writeCsrfCookie } from '../utils/authCookies.js';
+import { parseSessionLifetime } from '../utils/sessionLifetime.js';
 import { User, UserPermissions } from '../types/index.js';
 
 const router = Router();
@@ -39,7 +40,7 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
 };
 
 const passwordSchema = z.string()
-  .min(9, '密码长度必须超过9位')
+  .min(9, '密码长度至少为9位')
   .regex(/[a-zA-Z]/, '密码必须包含字母')
   .regex(/[0-9]/, '密码必须包含数字');
 
@@ -110,79 +111,11 @@ function serializeUser(user: User) {
   };
 }
 
-function shouldUseSecureCookie(req: Request): boolean {
-  if (config.authCookieSecure === 'always') {
-    return true;
-  }
-  if (config.authCookieSecure === 'never') {
-    return false;
-  }
-
-  return req.secure;
-}
-
-function writeAuthCookie(req: Request, res: Response, token: string) {
-  const maxAge = 7 * 24 * 60 * 60 * 1000;
-  const secure = shouldUseSecureCookie(req);
-  const cookie = [
-    `${authCookieName}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${Math.floor(maxAge / 1000)}`,
-  ];
-
-  if (secure) {
-    cookie.push('Secure');
-  }
-
-  const csrfCookie = [
-    `${csrfCookieName}=${generateCsrfToken()}`,
-    'Path=/',
-    'SameSite=Lax',
-    `Max-Age=${Math.floor(maxAge / 1000)}`,
-  ];
-  if (secure) {
-    csrfCookie.push('Secure');
-  }
-  res.setHeader('Set-Cookie', [cookie.join('; '), csrfCookie.join('; ')]);
-}
-
-function clearAuthCookie(req: Request, res: Response) {
-  const secure = shouldUseSecureCookie(req);
-  const cookie = [
-    `${authCookieName}=`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    'Max-Age=0',
-  ];
-
-  if (secure) {
-    cookie.push('Secure');
-  }
-
-  const csrfCookie = [
-    `${csrfCookieName}=`,
-    'Path=/',
-    'SameSite=Lax',
-    'Max-Age=0',
-  ];
-  if (secure) {
-    csrfCookie.push('Secure');
-  }
-  res.setHeader('Set-Cookie', [cookie.join('; '), csrfCookie.join('; ')]);
-}
-
-function writeCsrfCookie(req: Request, res: Response, token: string) {
-  const cookie = [
-    `${csrfCookieName}=${token}`,
-    'Path=/',
-    'SameSite=Lax',
-    `Max-Age=${7 * 24 * 60 * 60}`,
-  ];
-  if (shouldUseSecureCookie(req)) cookie.push('Secure');
-  res.setHeader('Set-Cookie', cookie.join('; '));
+async function issueSession(req: Request, res: Response, user: User) {
+  const lifetime = await getSessionLifetime();
+  const token = generateToken(user, lifetime);
+  writeAuthCookies(req, res, token, generateCsrfToken(), parseSessionLifetime(lifetime));
+  return token;
 }
 
 router.get('/csrf', (req, res: Response) => {
@@ -232,8 +165,7 @@ router.post('/register', authRateLimitMiddleware, async (req, res: Response) => 
       updated_at: new Date().toISOString(),
     });
 
-    const token = generateToken(user.id);
-    writeAuthCookie(req, res, token);
+    const token = await issueSession(req, res, user);
     res.status(201).json({
       user: serializeUser(user),
       token,
@@ -280,8 +212,7 @@ router.post('/login', authRateLimitMiddleware, async (req, res: Response) => {
 
     clearLoginAttempts(ip);
 
-    const token = generateToken(user.id);
-    writeAuthCookie(req, res, token);
+    const token = await issueSession(req, res, user);
     res.json({
       user: serializeUser(user),
       token,
@@ -299,8 +230,17 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
   res.json(serializeUser(req.user!));
 });
 
+router.post('/session', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    await issueSession(req, res, req.user!);
+    res.json({ message: '登录有效期已更新' });
+  } catch {
+    res.status(500).json({ error: '更新登录有效期失败' });
+  }
+});
+
 router.post('/logout', (req, res: Response) => {
-  clearAuthCookie(req, res);
+  clearAuthCookies(req, res);
   res.json({ message: '已退出登录' });
 });
 
@@ -333,6 +273,7 @@ router.put('/profile', authMiddleware, async (req: AuthRequest, res: Response) =
     }
 
     const updatedUser = await db.updateUser(req.user!.id, updateData);
+    if (data.password) await issueSession(req, res, updatedUser!);
     res.json(serializeUser(updatedUser!));
   } catch (error) {
     if (error instanceof z.ZodError) {

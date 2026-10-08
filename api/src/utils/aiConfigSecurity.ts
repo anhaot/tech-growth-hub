@@ -13,12 +13,15 @@ function isPrivateIpv4(hostname: string): boolean {
     return false;
   }
 
-  const [a, b] = [Number(match[1]), Number(match[2])];
+  const [a, b, c] = [Number(match[1]), Number(match[2]), Number(match[3])];
   if (a === 10 || a === 127 || a === 0 || a >= 224) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
   if (a === 192 && b === 168) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 169 && b === 254) return true;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
   return false;
 }
 
@@ -33,7 +36,14 @@ function isUnsafeIpAddress(address: string): boolean {
   if (normalized.startsWith('ff')) return true;
   if (normalized.startsWith('2001:db8:')) return true;
   const mappedIpv4 = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-  return mappedIpv4 ? isPrivateIpv4(mappedIpv4) : false;
+  if (mappedIpv4) return isPrivateIpv4(mappedIpv4);
+  const mappedHex = normalized.match(/^::ffff:([a-f\d]{1,4}):([a-f\d]{1,4})$/);
+  if (mappedHex) {
+    const high = parseInt(mappedHex[1], 16);
+    const low = parseInt(mappedHex[2], 16);
+    return isPrivateIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+  }
+  return false;
 }
 
 function isUnsafeHostname(hostname: string): boolean {
@@ -46,9 +56,7 @@ function isUnsafeHostname(hostname: string): boolean {
     normalized === 'localhost' ||
     normalized.endsWith('.local') ||
     normalized.endsWith('.internal') ||
-    normalized === '::1' ||
-    normalized.startsWith('fc') ||
-    normalized.startsWith('fd')
+    normalized === '::1'
   ) {
     return true;
   }
@@ -79,7 +87,12 @@ export function validateAIBaseUrl(
   const hostname = parsed.hostname.toLowerCase();
   const isBuiltinHost = BUILTIN_AI_HOSTS.has(hostname);
 
-  if (mode === 'configure' && isCustom && actor.role !== 'admin') {
+  if (parsed.protocol !== 'https:') throw new Error('AI API 地址仅允许使用 HTTPS');
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('AI API 地址不能包含账号、密码、查询参数或片段');
+  }
+
+  if (mode === 'configure' && (isCustom || !isBuiltinHost) && actor.role !== 'admin') {
     throw new Error('自定义 AI 地址仅管理员可配置');
   }
 

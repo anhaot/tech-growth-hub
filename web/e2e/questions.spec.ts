@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { apiLogin, createQuestion, getQuestion, primeAuth, registerUser } from './utils';
 
+// Mocked API responses must not be intercepted by a real service worker.
+test.use({ serviceWorkers: 'block' });
+
 test('题库页可以创建题目并在列表中搜索到', async ({ page, request }) => {
   const suffix = `${Date.now()}_create`;
   const user = await registerUser(request, suffix);
@@ -60,7 +63,8 @@ test('AI 润色支持预览后保存回题目', async ({ page, request }) => {
   await page.getByTestId(`question-polish-${question.id}`).last().click();
 
   await expect(page.getByTestId('ai-polish-modal')).toBeVisible();
-  await expect(page.getByText(`E2E 润色后内容 ${suffix}`)).toBeVisible();
+  await expect(page.getByTestId('ai-polish-modal').getByRole('textbox', { name: '题目内容', exact: true }))
+    .toHaveValue(`E2E 润色后内容 ${suffix}`);
   await page.getByTestId('ai-polish-save-button').click();
   await expect(page.getByTestId('ai-polish-modal')).toBeHidden();
 

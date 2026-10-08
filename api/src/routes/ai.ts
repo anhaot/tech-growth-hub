@@ -12,6 +12,18 @@ import { normalizeTagsInput, parseStoredTags, parseTagAliasMap, TagAliasMap } fr
 const router = Router();
 router.use(authMiddleware, requirePermission('ai_use', '没有AI使用权限'));
 
+const inferencePaths = new Set(['/analyze', '/explain', '/expand', '/recommend', '/generate', '/chat', '/test-config', '/batch-generate', '/polish-question', '/answer-drafts/raw', '/answer-draft', '/batch-tags']);
+async function isAIEnabled() {
+  const stored = await db.getSetting('ai_enabled');
+  return stored === null || stored === undefined ? config.ai.enabled : stored === 'true';
+}
+router.use(async (req, res, next) => {
+  try {
+    if (req.method === 'POST' && inferencePaths.has(req.path) && !await isAIEnabled()) { res.status(403).json({ error: 'AI 功能已关闭，请联系管理员开启' }); return; }
+    next();
+  } catch { res.status(500).json({ error: '读取 AI 设置失败' }); }
+});
+
 const aiConfigSchema = z.object({
   provider: z.string().min(1).max(50),
   displayName: z.string().max(100).optional(),
@@ -128,6 +140,7 @@ async function fetchAIModels(baseUrl: string, apiKey: string) {
       method: 'GET',
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: controller.signal,
+      redirect: 'error',
     });
     const text = await response.text();
 
@@ -345,7 +358,7 @@ router.get('/status', authMiddleware, requirePermission('ai_use', '没有AI使�
   }));
   
   res.json({
-    enabled: config.ai.enabled,
+    enabled: await isAIEnabled(),
     defaultProvider: activeConfig?.display_name || activeConfig?.provider || config.ai.defaultProvider,
     defaultConfigId: activeConfig?.id,
     availableProviders: userConfigs.map(c => c.display_name || c.provider),
@@ -358,11 +371,11 @@ router.put('/settings', authMiddleware, requirePermission('system_manage', '没�
     const data = aiSettingsSchema.parse(req.body);
     
     if (data.enabled !== undefined) {
-      config.ai.enabled = data.enabled;
+      await db.setSetting('ai_enabled', String(data.enabled));
     }
     
     res.json({
-      enabled: config.ai.enabled,
+      enabled: await isAIEnabled(),
       defaultProvider: config.ai.defaultProvider,
       availableProviders: aiService.getAvailableProviders(),
     });
@@ -1265,7 +1278,7 @@ existingTags: ${JSON.stringify(existingTags)}
 
         const nextValue = JSON.stringify(nextTags);
         if (nextValue !== (question.tags || '[]')) {
-          await db.updateQuestion(question.id, { tags: nextValue });
+          await db.updateQuestion(question.id, { tags: nextValue }, { actorId: req.user!.id, source: 'ai-tags', expectedRevision: question.revision });
           updated += 1;
         }
 

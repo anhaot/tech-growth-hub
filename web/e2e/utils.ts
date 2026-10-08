@@ -6,7 +6,7 @@ export const adminUser = {
   password: 'AdminPass123',
 };
 
-const apiBaseUrl = 'http://127.0.0.1:3102/api';
+export const apiBaseUrl = `http://127.0.0.1:${process.env.E2E_API_PORT || 3102}/api`;
 let authRequestSequence = 10;
 
 function nextTestClientIp(): string {

@@ -26,6 +26,7 @@ import {
   MoreHorizontal,
 } from 'lucide-react';
 import AIAssistant from '@/components/AIAssistant';
+import QuestionHistoryModal from '@/components/QuestionHistoryModal';
 
 interface LearningPageProps {
   mode: 'study' | 'quiz';
@@ -38,10 +39,18 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const canEditQuestionMeta = hasPermission(user, 'question_edit_meta');
   const canManageQuestions = canEditQuestionContent || canEditQuestionMeta;
   const canUseAI = hasPermission(user, 'ai_use');
+  const [totalQuestions, setTotalQuestions] = useState(0);
+  const [pageStart, setPageStart] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const requestSequence = useRef(0);
+  const navigationBusy = useRef(false);
+  const PAGE_SIZE = 100;
   const [questions, setQuestions] = useState<Question[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [availableTags, setAvailableTags] = useState<Array<{ name: string; count: number }>>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [jumpPosition, setJumpPosition] = useState('1');
+  const progressSequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
@@ -72,51 +81,37 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const autoShowAnswer = mode === 'study';
 
   const fetchQuestions = useCallback(async (restorePosition = true) => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
+    setInitialized(false);
+    progressSequence.current++;
     setFetchError('');
     try {
-      const [response, lastViewed] = await Promise.all([
-        questionApi.getAll({
-          page: 1,
-          pageSize: 1000,
-          categoryId,
-          tags: selectedTags,
-        }),
-        restorePosition
-          ? questionApi.getLastViewed(mode, categoryId).catch((error) => {
-              console.warn('Failed to restore the last viewed question:', error);
-              return null;
-            })
-          : Promise.resolve(null),
-      ]);
-      const questionsData = response.data.data;
-      setQuestions(questionsData);
-      
-      if (restorePosition && questionsData.length > 0) {
-        const lastViewedQuestionId = lastViewed?.data?.question_id;
-        if (lastViewedQuestionId) {
-          const lastIndex = questionsData.findIndex(q => q.id === lastViewedQuestionId);
-          if (lastIndex >= 0) {
-            setCurrentIndex(lastIndex);
-          } else {
-            setCurrentIndex(0);
-          }
-        } else {
-          setCurrentIndex(0);
+      let index = 0;
+      if (restorePosition) {
+        const lastViewed = await questionApi.getLastViewed(mode, categoryId).catch(() => null);
+        if (lastViewed?.data?.question_id) {
+          const position = await questionApi.getPosition(lastViewed.data.question_id, { categoryId, tags: selectedTags }).catch(() => null);
+          index = position?.data.index ?? 0;
         }
-      } else {
-        setCurrentIndex(0);
       }
-      
+      const response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+      if (sequence !== requestSequence.current) return;
+      setQuestions(response.data.data);
+      setTotalQuestions(response.data.total);
+      setPageStart(Math.floor(index / PAGE_SIZE) * PAGE_SIZE);
+      setCurrentIndex(index);
       setShowAnswer(autoShowAnswer);
+      setProgress(null);
     } catch (error: any) {
+      if (sequence !== requestSequence.current) return;
       const message = error.response?.data?.error || '无法连接题库服务，请稍后重试';
       setQuestions([]);
+      setTotalQuestions(0);
       setFetchError(message);
       toast.error(`获取题目失败：${message}`);
     } finally {
-      setLoading(false);
-      setInitialized(true);
+      if (sequence === requestSequence.current) { setLoading(false); setInitialized(true); }
     }
   }, [categoryId, autoShowAnswer, mode, selectedTags]);
 
@@ -140,38 +135,21 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     }
   };
 
-  const fetchProgress = async (questionId: string) => {
-    try {
-      const response = await questionApi.getProgress(questionId, mode);
-      setProgress(response.data);
-    } catch (error) {
-      console.error('Failed to fetch progress:', error);
-    }
-  };
-
   const saveViewProgress = async (questionId: string) => {
+    const sequence = ++progressSequence.current;
     try {
-      const currentProgress = await questionApi.getProgress(questionId, mode);
-      await questionApi.saveProgress(questionId, {
-        mode,
-        isBookmarked: currentProgress.data?.is_bookmarked || false,
-      });
-    } catch (error) {
-      console.error('Failed to save view progress:', error);
-    }
+      const response = await questionApi.saveProgress(questionId, { mode });
+      if (sequence === progressSequence.current) setProgress(response.data);
+    } catch (error) { console.error('Failed to save view progress:', error); }
   };
 
   const saveProgress = async (isBookmarked: boolean) => {
     if (!currentQuestion) return;
 
     try {
-      await questionApi.saveProgress(currentQuestion.id, {
-        mode,
-        isBookmarked,
-      });
-      setProgress((prev) =>
-        prev ? { ...prev, is_bookmarked: isBookmarked } : null
-      );
+      const sequence = ++progressSequence.current;
+      const response = await questionApi.saveProgress(currentQuestion.id, { mode, isBookmarked });
+      if (sequence === progressSequence.current) setProgress(response.data);
       toast.success(isBookmarked ? '已收藏' : '已取消收藏');
     } catch (error) {
       toast.error('操作失败');
@@ -201,7 +179,8 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     if (!currentQuestion) return;
 
     try {
-      await questionApi.update(currentQuestion.id, {
+      const response = await questionApi.update(currentQuestion.id, {
+        expectedRevision: currentQuestion.revision,
         ...(canEditQuestionContent ? {
           title: editForm.title,
           content: editForm.content,
@@ -215,25 +194,12 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
         } : {}),
       });
       
-      setQuestions(prev => prev.map(q => 
-        q.id === currentQuestion.id 
-          ? { 
-              ...q, 
-              title: editForm.title,
-              content: editForm.content,
-              answer: editForm.answer,
-              explanation: editForm.explanation || null,
-              difficulty: editForm.difficulty,
-              category_id: editForm.categoryId || null,
-              tags: JSON.stringify(parseQuestionTags(editForm.tags)),
-            }
-          : q
-      ));
+      setQuestions(prev => prev.map(q => q.id === currentQuestion.id ? response.data : q));
       
       setIsEditing(false);
       toast.success('保存成功');
-    } catch (error) {
-      toast.error('保存失败');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || '保存失败');
     }
   };
 
@@ -250,12 +216,11 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   }, [fetchQuestions]);
 
   useEffect(() => {
-    if (questions.length > 0 && questions[currentIndex] && initialized) {
-      fetchProgress(questions[currentIndex].id);
-      saveViewProgress(questions[currentIndex].id);
+    if (totalQuestions > 0 && questions[currentIndex - pageStart] && initialized) {
+      saveViewProgress(questions[currentIndex - pageStart].id);
       setShowAnswer(autoShowAnswer);
     }
-  }, [questions, currentIndex, autoShowAnswer, initialized, mode]);
+  }, [questions, currentIndex, pageStart, autoShowAnswer, initialized, mode]);
 
   useEffect(() => {
     if (!resetScrollAfterNavigationRef.current) return;
@@ -268,20 +233,44 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     return () => window.cancelAnimationFrame(frame);
   }, [currentIndex]);
 
-  const currentQuestion = questions[currentIndex];
+  useEffect(() => { setJumpPosition(String(currentIndex + 1)); }, [currentIndex]);
+
+  const currentQuestion = questions[currentIndex - pageStart];
   const currentQuestionTags = currentQuestion ? parseQuestionTags(currentQuestion.tags) : [];
   const matchedEditTags = getFilteredTagSuggestions(editForm.tags, availableTags);
-  const browsePositionPercent = questions.length > 0
-    ? Math.round(((currentIndex + 1) / questions.length) * 100)
+  const browsePositionPercent = totalQuestions > 0
+    ? Math.round(((currentIndex + 1) / totalQuestions) * 100)
     : 0;
   const ModeIcon = modeIcon;
-  const navigateToIndex = (nextIndex: number) => {
-    const boundedIndex = Math.max(0, Math.min(nextIndex, questions.length - 1));
+  const navigateToIndex = async (nextIndex: number) => {
+    if (navigationBusy.current || loading) return;
+    const boundedIndex = Math.max(0, Math.min(nextIndex, totalQuestions - 1));
     if (boundedIndex === currentIndex) return;
+    navigationBusy.current = true;
+    progressSequence.current++;
+    const sequence = requestSequence.current;
+    try {
+      if (boundedIndex < pageStart || boundedIndex >= pageStart + questions.length) {
+        setLoading(true);
+        const response = await questionApi.getAll({ page: Math.floor(boundedIndex / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+        if (sequence !== requestSequence.current) return;
+        if (!response.data.data.length) { await fetchQuestions(false); return; }
+        setQuestions(response.data.data);
+        setTotalQuestions(response.data.total);
+        setPageStart(Math.floor(boundedIndex / PAGE_SIZE) * PAGE_SIZE);
+      }
+      resetScrollAfterNavigationRef.current = true;
+      setShowMobileQuestionActions(false);
+      setProgress(null);
+      setCurrentIndex(boundedIndex);
+    } catch { toast.error('加载题目失败，请重试'); }
+    finally { navigationBusy.current = false; if (sequence === requestSequence.current) setLoading(false); }
+  };
 
-    resetScrollAfterNavigationRef.current = true;
-    setShowMobileQuestionActions(false);
-    setCurrentIndex(boundedIndex);
+  const jumpToQuestion = () => {
+    const position = Number(jumpPosition);
+    if (!Number.isInteger(position) || position < 1 || position > totalQuestions) { toast.error(`请输入 1 到 ${totalQuestions} 的题号`); return; }
+    void navigateToIndex(position - 1);
   };
 
   const handlePrev = () => {
@@ -291,16 +280,16 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   };
 
   const handleNext = () => {
-    if (currentIndex < questions.length - 1) {
+    if (currentIndex < totalQuestions - 1) {
       navigateToIndex(currentIndex + 1);
     }
   };
 
   const handleRandom = () => {
-    if (questions.length <= 1) return;
+    if (totalQuestions <= 1) return;
     let randomIndex = currentIndex;
     while (randomIndex === currentIndex) {
-      randomIndex = Math.floor(Math.random() * questions.length);
+      randomIndex = Math.floor(Math.random() * totalQuestions);
     }
     navigateToIndex(randomIndex);
   };
@@ -361,7 +350,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
       mobileMain.removeEventListener('touchend', handleSwipeEnd);
       mobileMain.removeEventListener('touchcancel', resetSwipe);
     };
-  }, [currentIndex, isEditing, questions.length]);
+  }, [currentIndex, isEditing, totalQuestions]);
 
   const getDifficultyConfig = (difficulty: string) => {
     const configs: Record<string, { label: string; bg: string; text: string; border: string }> = {
@@ -411,19 +400,19 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
             type="button"
             aria-label="上一题"
             onClick={handlePrev}
-            disabled={currentIndex === 0 || questions.length === 0}
+            disabled={currentIndex === 0 || totalQuestions === 0}
             className="flex h-8 w-7 items-center justify-center text-slate-600 disabled:opacity-30"
           >
             <ChevronLeft size={17} />
           </button>
           <span className={`min-w-[2.8rem] text-center text-[11px] font-semibold ${mode === 'study' ? 'text-emerald-700' : 'text-blue-700'}`}>
-            {questions.length > 0 ? currentIndex + 1 : 0}/{questions.length}
+            {totalQuestions > 0 ? currentIndex + 1 : 0}/{totalQuestions}
           </span>
           <button
             type="button"
             aria-label="下一题"
             onClick={handleNext}
-            disabled={currentIndex >= questions.length - 1 || questions.length === 0}
+            disabled={currentIndex >= totalQuestions - 1 || totalQuestions === 0}
             className="flex h-8 w-7 items-center justify-center text-slate-600 disabled:opacity-30"
           >
             <ChevronRight size={17} />
@@ -590,6 +579,8 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
           </div>
       </div>
 
+      {currentQuestion ? <div className="flex justify-between items-center gap-2"><div className="flex items-center gap-2 lg:hidden"><input type="number" min={1} max={totalQuestions} value={jumpPosition} aria-label="跳转题号" onChange={(event) => setJumpPosition(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') jumpToQuestion(); }} className="input-field w-20" /><span className="text-sm">/{totalQuestions}</span><button className="text-sm text-primary-600" onClick={jumpToQuestion}>跳转</button></div><button className="text-sm text-primary-600 px-3 py-2" onClick={() => setHistoryOpen(true)}>版本历史</button></div> : null}
+      <QuestionHistoryModal question={historyOpen ? currentQuestion : null} onClose={() => setHistoryOpen(false)} onRestored={(question) => { setQuestions((items) => items.map((item) => item.id === question.id ? question : item)); }} />
       {fetchError ? (
         <div className="surface-card flex min-h-64 flex-col items-center justify-center p-8 text-center">
           <div className="mb-4 rounded-2xl bg-rose-50 p-4">
@@ -605,7 +596,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
             重新加载
           </button>
         </div>
-      ) : questions.length === 0 ? (
+      ) : totalQuestions === 0 ? (
         <div className="h-64 bg-white rounded-2xl border border-gray-100 flex flex-col items-center justify-center text-gray-500">
           <div className="mb-4 rounded-2xl bg-gray-50 p-4">
             <BookOpen size={32} className="text-gray-400" />
@@ -622,17 +613,15 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                 <input
                   type="number"
                   min={1}
-                  max={questions.length}
-                  value={currentIndex + 1}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value);
-                    if (value >= 1 && value <= questions.length) {
-                      setCurrentIndex(value - 1);
-                    }
-                  }}
-                  className="w-10 border-0 bg-transparent text-center text-base font-bold text-gray-900 focus:outline-none focus:ring-0 lg:w-12 lg:text-lg"
+                  max={totalQuestions}
+                  value={jumpPosition}
+                  aria-label="跳转题号"
+                  onChange={(e) => setJumpPosition(e.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') jumpToQuestion(); }}
+                  className="w-20 border-0 bg-transparent text-center text-base font-bold text-gray-900 focus:outline-none focus:ring-0 lg:w-20 lg:text-lg"
                 />
-                <span className="text-sm text-gray-400">/ {questions.length}</span>
+                <span className="text-sm text-gray-400">/ {totalQuestions}</span>
+                <button className="text-sm text-primary-600" onClick={jumpToQuestion}>跳转</button>
               </div>
               <div className="hidden items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 shadow-sm lg:flex">
                 <Eye size={16} className="text-gray-400" />
@@ -928,7 +917,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
               </button>
               <button
                 onClick={handleNext}
-                disabled={currentIndex === questions.length - 1}
+                disabled={currentIndex === totalQuestions - 1}
                 className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-3 sm:py-2.5 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
               >
                 <span className="sm:inline">下一题</span>

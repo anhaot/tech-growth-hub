@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuthStore, useAIStore } from '@/store';
-import { categoryApi, aiApi, adminApi, questionApi } from '@/api';
+import { categoryApi, aiApi, adminApi, questionApi, authApi } from '@/api';
 import { getTagColorClasses } from '@/lib/tagColors';
 import { getSingleValueSuggestions } from '@/lib/tagSuggestions';
 import {
@@ -1941,6 +1941,11 @@ const SystemSettings: React.FC = () => {
   const canManageUsers = hasPermission(user, 'user_manage');
   const canBackupRestore = isAdmin;
   const [allowRegister, setAllowRegister] = useState(true);
+  const [sessionDuration, setSessionDuration] = useState('7d');
+  const [customSessionAmount, setCustomSessionAmount] = useState('30');
+  const [customSessionUnit, setCustomSessionUnit] = useState('d');
+  const [sessionUpdating, setSessionUpdating] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -1975,6 +1980,18 @@ const SystemSettings: React.FC = () => {
     try {
       const response = await adminApi.getSettings();
       setAllowRegister(response.data.allowRegister);
+      const duration = response.data.loginSessionDuration;
+      if (['1h', '1d', '7d', '30d', '90d', '365d', 'forever'].includes(duration)) {
+        setSessionDuration(duration);
+      } else {
+        const match = /^(\d+)(s|m|h|d)$/.exec(duration);
+        if (match) {
+          setSessionDuration('custom');
+          setCustomSessionAmount(match[1]);
+          setCustomSessionUnit(match[2]);
+        }
+      }
+      setSettingsReady(true);
     } catch (error) {
       console.error('Failed to fetch settings:', error);
     }
@@ -2070,6 +2087,34 @@ const SystemSettings: React.FC = () => {
     }
   };
 
+  const handleSaveSessionDuration = async () => {
+    const duration = sessionDuration === 'custom' ? `${customSessionAmount}${customSessionUnit}` : sessionDuration;
+    const units: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+    if (sessionDuration === 'custom') {
+      const seconds = Number(customSessionAmount) * units[customSessionUnit];
+      if (!/^\d+$/.test(customSessionAmount) || !Number.isSafeInteger(seconds) || seconds < 60 || seconds > 365 * 86400) {
+        toast.error('登录有效期须为 1 分钟至 365 天');
+        return;
+      }
+    }
+    setSessionUpdating(true);
+    try {
+      await adminApi.updateSetting('login_session_duration', duration);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || '保存登录有效期失败');
+      setSessionUpdating(false);
+      return;
+    }
+    try {
+      await authApi.refreshSession();
+      toast.success('登录有效期已保存，并已应用到当前登录');
+    } catch {
+      toast.error('设置已保存，当前登录期限未更新；重新登录后生效');
+    } finally {
+      setSessionUpdating(false);
+    }
+  };
+
   const handleExportBackup = async () => {
     setBackupBusy(true);
     try {
@@ -2099,7 +2144,7 @@ const SystemSettings: React.FC = () => {
       const parsed = JSON.parse(raw);
       const counts = parsed?.meta?.counts;
       const preview = counts
-        ? `用户 ${counts.users} / 分类 ${counts.categories} / 题目 ${counts.questions} / 学习记录 ${counts.learning_progress} / AI配置 ${counts.ai_configs} / 系统设置 ${counts.system_settings}`
+        ? `用户 ${counts.users} / 分类 ${counts.categories} / 题目 ${counts.questions} / 题目版本 ${counts.question_versions || 0} / 学习记录 ${counts.learning_progress} / AI配置 ${counts.ai_configs} / 系统设置 ${counts.system_settings}`
         : '未提供数量摘要';
       if (!confirm(`将恢复以下备份数据：\n${preview}\n\n恢复会覆盖当前系统数据，确定继续吗？`)) {
         setBackupBusy(false);
@@ -2266,6 +2311,39 @@ const SystemSettings: React.FC = () => {
           </div>
 
           <div className="p-6 space-y-6">
+            <div className="space-y-3 rounded-xl bg-gray-50 p-4">
+              <label htmlFor="login-session-duration" className="block font-medium text-gray-900">登录有效期</label>
+              <p className="text-sm text-gray-500">适用于全站新登录；保存后同时更新当前登录的有效期。</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <select id="login-session-duration" data-testid="login-session-duration" value={sessionDuration}
+                  onChange={(event) => setSessionDuration(event.target.value)} disabled={!settingsReady || sessionUpdating}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+                  <option value="1h">1 小时</option>
+                  <option value="1d">1 天</option>
+                  <option value="7d">7 天</option>
+                  <option value="30d">30 天</option>
+                  <option value="90d">90 天</option>
+                  <option value="365d">365 天</option>
+                  <option value="forever">一直有效</option>
+                  <option value="custom">自定义</option>
+                </select>
+                {sessionDuration === 'custom' && <>
+                  <input aria-label="自定义登录时长" type="number" min="1" step="1" value={customSessionAmount}
+                    onChange={(event) => setCustomSessionAmount(event.target.value)} disabled={sessionUpdating}
+                    className="w-28 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" />
+                  <select aria-label="登录时长单位" value={customSessionUnit} onChange={(event) => setCustomSessionUnit(event.target.value)}
+                    disabled={sessionUpdating} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+                    <option value="s">秒</option><option value="m">分钟</option><option value="h">小时</option><option value="d">天</option>
+                  </select>
+                </>}
+                <button type="button" data-testid="save-session-duration" onClick={handleSaveSessionDuration}
+                  disabled={!settingsReady || sessionUpdating}
+                  className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50">
+                  {sessionUpdating ? '保存中…' : '保存登录有效期'}
+                </button>
+              </div>
+              {sessionDuration === 'forever' && <p className="text-sm text-amber-700">一直有效会持续保留登录。主动退出、修改密码或清除浏览器数据后需要重新登录；浏览器可能限制长期未使用的 Cookie。</p>}
+            </div>
             <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-pink-100 rounded-lg">

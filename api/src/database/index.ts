@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import mysql from 'mysql2/promise';
+import type { ExecuteValues } from 'mysql2';
 import { config } from '../config/index.js';
 import { normalizeTagName, parseStoredTags } from '../utils/tags.js';
 import { decryptSecret, encryptSecret, protectStoredSecret } from '../utils/secretEncryption.js';
@@ -7,6 +8,7 @@ import {
   User,
   Category,
   Question,
+  QuestionVersion,
   LearningProgress,
   ReviewEvent,
   ReviewQueueItem,
@@ -34,13 +36,55 @@ function getChangedRows(result: unknown): number {
   return 0;
 }
 
-function normalizeMySQLParams(params: unknown[]): unknown[] {
-  return params.map((value) => {
-    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
-      return value.slice(0, 19).replace('T', ' ');
+function normalizeMySQLParams(params: unknown[], sql: string): ExecuteValues[] {
+  const dateColumns = new Set(['created_at', 'updated_at', 'last_viewed_at', 'due_at', 'reviewed_at', 'last_reviewed_at']);
+  const datePositions = new Set<number>();
+  const insert = sql.match(/INSERT(?:\s+IGNORE)?\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+  if (insert) {
+    const columns = insert[1].split(',').map((column) => column.trim().replace(/`/g, ''));
+    let position = 0;
+    insert[2].split(',').forEach((value, index) => {
+      if (!value.includes('?')) return;
+      if (dateColumns.has(columns[index])) datePositions.add(position);
+      position++;
+    });
+  }
+  let position = 0;
+  for (const placeholder of sql.matchAll(/\?/g)) {
+    const before = sql.slice(0, placeholder.index);
+    const column = before.match(/(?:\w+\.)?([a-z_]+)\s*(?:>=|<=|=|>|<)\s*$/i)?.[1];
+    if (column && dateColumns.has(column.toLowerCase())) datePositions.add(position);
+    position++;
+  }
+  return params.map((value, index) => {
+    if (datePositions.has(index) && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
+      return value.replace('T', ' ').replace(/Z$/, '');
     }
-    return value;
+    return value as ExecuteValues;
   });
+}
+
+function normalizeMySQLRows<T>(rows: unknown): T[] {
+  return (rows as Array<Record<string, unknown>>).map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]))) as T[];
+}
+
+function orderRestoredCategories(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  if (byId.size !== rows.length) throw new Error('备份分类 ID 重复');
+  const children = new Map<string, Record<string, unknown>[]>();
+  const ordered: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    if (!row.parent_id) { ordered.push(row); continue; }
+    const parent = byId.get(String(row.parent_id));
+    if (!parent || parent.user_id !== row.user_id) throw new Error('备份父分类不存在或不属于同一题库');
+    const list = children.get(String(row.parent_id)) || [];
+    list.push(row); children.set(String(row.parent_id), list);
+  }
+  for (let index = 0; index < ordered.length; index++) {
+    for (const child of children.get(String(ordered[index].id)) || []) ordered.push(child);
+  }
+  if (ordered.length !== rows.length) throw new Error('备份分类存在循环引用');
+  return ordered;
 }
 
 const DEFAULT_USER_PERMISSIONS: UserPermissions = {
@@ -111,6 +155,7 @@ export class DatabaseManager {
       await this.connectMySQL();
     }
     await this.initializeTables();
+    await this.initializeQuestionVersions();
     await this.migrateAIConfigSecrets();
     await this.migrateAICredentialLinks();
     if (!this.skipDefaultAdmin) {
@@ -142,6 +187,8 @@ export class DatabaseManager {
       database,
       waitForConnections: true,
       connectionLimit: 10,
+      jsonStrings: true,
+      timezone: 'Z',
       queueLimit: 0,
     });
 
@@ -159,6 +206,37 @@ export class DatabaseManager {
     } else {
       await this.initMySQLTables();
     }
+  }
+
+  private async initializeQuestionVersions(): Promise<void> {
+    if (this.sqliteDb) {
+      const columns = this.sqliteDb.prepare('PRAGMA table_info(questions)').all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'revision')) {
+        this.sqliteDb.exec('ALTER TABLE questions ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
+      }
+      this.sqliteDb.exec(`CREATE TABLE IF NOT EXISTS question_versions (
+        id TEXT PRIMARY KEY, question_id TEXT NOT NULL, version INTEGER NOT NULL,
+        snapshot TEXT NOT NULL, actor_id TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(question_id, version), FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
+      ); CREATE INDEX IF NOT EXISTS idx_questions_user_order ON questions(user_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS idx_questions_user_category_order ON questions(user_id, category_id, created_at, id);`);
+    } else if (this.mysqlPool) {
+      const [columns] = await this.mysqlPool.execute<mysql.RowDataPacket[]>("SHOW COLUMNS FROM questions LIKE 'revision'");
+      if (!columns.length) await this.mysqlPool.execute('ALTER TABLE questions ADD COLUMN revision INT NOT NULL DEFAULT 1');
+      await this.mysqlPool.execute(`CREATE TABLE IF NOT EXISTS question_versions (
+        id VARCHAR(36) PRIMARY KEY, question_id VARCHAR(36) NOT NULL, version INT NOT NULL,
+        snapshot LONGTEXT NOT NULL, actor_id VARCHAR(36), source VARCHAR(100) NOT NULL, created_at DATETIME(3) NOT NULL,
+        UNIQUE(question_id, version), FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
+      )`);
+      await this.ensureMySQLIndex('questions', 'idx_questions_user_order', 'user_id, created_at, id');
+      await this.ensureMySQLIndex('questions', 'idx_questions_user_category_order', 'user_id, category_id, created_at, id');
+    }
+  }
+
+  private async ensureMySQLIndex(table: string, name: string, columns: string): Promise<void> {
+    const [indexes] = await this.mysqlPool!.execute<mysql.RowDataPacket[]>(
+      'SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?', [table, name]);
+    if (!indexes.length) await this.mysqlPool!.execute(`CREATE INDEX ${name} ON ${table} (${columns})`);
   }
 
   private async migrateAIConfigSecrets(): Promise<void> {
@@ -566,18 +644,10 @@ export class DatabaseManager {
       `);
     } catch (error) { /* Column already exists */ }
 
-    await this.mysqlPool.execute(`
-      CREATE INDEX IF NOT EXISTS idx_questions_user_id ON questions(user_id)
-    `);
-    await this.mysqlPool.execute(`
-      CREATE INDEX IF NOT EXISTS idx_questions_category_id ON questions(category_id)
-    `);
-    await this.mysqlPool.execute(`
-      CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id)
-    `);
-    await this.mysqlPool.execute(`
-      CREATE INDEX IF NOT EXISTS idx_learning_progress_user_id ON learning_progress(user_id)
-    `);
+    await this.ensureMySQLIndex('questions', 'idx_questions_user_id', 'user_id');
+    await this.ensureMySQLIndex('questions', 'idx_questions_category_id', 'category_id');
+    await this.ensureMySQLIndex('categories', 'idx_categories_user_id', 'user_id');
+    await this.ensureMySQLIndex('learning_progress', 'idx_learning_progress_user_id', 'user_id');
 
     await this.mysqlPool.execute(`
       CREATE TABLE IF NOT EXISTS system_settings (
@@ -665,7 +735,7 @@ export class DatabaseManager {
       const stmt = this.sqliteDb.prepare(sql);
       return stmt.run(...params);
     } else if (this.mysqlPool) {
-      const [result] = await this.mysqlPool.execute(sql, normalizeMySQLParams(params));
+      const [result] = await this.mysqlPool.execute(sql, normalizeMySQLParams(params, sql));
       return result;
     }
     throw new Error('Database not connected');
@@ -676,8 +746,8 @@ export class DatabaseManager {
       const stmt = this.sqliteDb.prepare(sql);
       return stmt.get(...params) as T | undefined;
     } else if (this.mysqlPool) {
-      const [rows] = await this.mysqlPool.execute(sql, normalizeMySQLParams(params));
-      const results = rows as T[];
+      const [rows] = await this.mysqlPool.execute(sql, normalizeMySQLParams(params, sql));
+      const results = normalizeMySQLRows<T>(rows);
       return results[0];
     }
     throw new Error('Database not connected');
@@ -688,8 +758,8 @@ export class DatabaseManager {
       const stmt = this.sqliteDb.prepare(sql);
       return stmt.all(...params) as T[];
     } else if (this.mysqlPool) {
-      const [rows] = await this.mysqlPool.execute(sql, normalizeMySQLParams(params));
-      return rows as T[];
+      const [rows] = await this.mysqlPool.execute(sql, normalizeMySQLParams(params, sql));
+      return normalizeMySQLRows<T>(rows);
     }
     throw new Error('Database not connected');
   }
@@ -834,6 +904,9 @@ export class DatabaseManager {
     values.push(id);
 
     await this.run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
+    if (data.password_hash !== undefined) {
+      await this.setSetting(`auth_legacy_revoked:${id}`, 'true');
+    }
     return this.getUserById(id);
   }
 
@@ -919,7 +992,7 @@ export class DatabaseManager {
       question.created_at,
       question.updated_at,
     ]);
-    return question;
+    return { ...question, revision: 1 };
   }
 
   async getQuestionById(id: string): Promise<Question | undefined> {
@@ -933,13 +1006,7 @@ export class DatabaseManager {
     return this.get<Question>('SELECT * FROM questions WHERE id = ? AND user_id = ?', [id, userId]);
   }
 
-  async getQuestions(
-    userId: string,
-    page: number = 1,
-    pageSize: number = 20,
-    filter?: { categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] },
-    allowedCategoryIds?: string[]
-  ): Promise<{ questions: Question[]; total: number }> {
+  private questionConditions(userId: string, filter?: { categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] }, allowedCategoryIds?: string[]) {
     const conditions: string[] = ['user_id = ?'];
     const params: unknown[] = [userId];
 
@@ -966,10 +1033,55 @@ export class DatabaseManager {
     }
 
     const whereClause = conditions.join(' AND ');
+    return { whereClause, params };
+  }
+
+  async getAllQuestions(userId: string, allowedCategoryIds?: string[]): Promise<Question[]> {
+    const { whereClause, params } = this.questionConditions(userId, undefined, allowedCategoryIds);
+    const questions: Question[] = [];
+    let cursor: Question | undefined;
+    let more = true;
+    while (more) {
+      const cursorClause = cursor ? ' AND (created_at < ? OR (created_at = ? AND id < ?))' : '';
+      const batch = await this.all<Question>(`SELECT * FROM questions WHERE ${whereClause}${cursorClause} ORDER BY created_at DESC, id DESC LIMIT 1000`, [...params, ...(cursor ? [cursor.created_at, cursor.created_at, cursor.id] : [])]);
+      questions.push(...batch);
+      more = batch.length === 1000;
+      if (!more) break;
+      cursor = batch[batch.length - 1];
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    return questions;
+  }
+
+  async getQuestionPosition(id: string, userId: string, filter?: { categoryId?: string; tags?: string[] }, allowedCategoryIds?: string[]): Promise<number | null> {
+    const { whereClause, params } = this.questionConditions(userId, filter, allowedCategoryIds);
+    const current = await this.get<Question>(`SELECT * FROM questions WHERE ${whereClause} AND id = ?`, [...params, id]);
+    if (!current) return null;
+    const count = await this.get<{ count: number }>(`SELECT COUNT(*) AS count FROM questions WHERE ${whereClause} AND (created_at > ? OR (created_at = ? AND id > ?))`, [...params, current.created_at, current.created_at, id]);
+    return count?.count || 0;
+  }
+
+  async getAdjacentQuestion(id: string, userId: string, direction: 'next' | 'prev', filter?: { categoryId?: string; tags?: string[] }, allowedCategoryIds?: string[]): Promise<Question | null> {
+    const { whereClause, params } = this.questionConditions(userId, filter, allowedCategoryIds);
+    const current = await this.get<Question>(`SELECT * FROM questions WHERE ${whereClause} AND id = ?`, [...params, id]);
+    if (!current) return null;
+    const comparator = direction === 'next' ? '<' : '>';
+    const order = direction === 'next' ? 'DESC' : 'ASC';
+    return await this.get<Question>(`SELECT * FROM questions WHERE ${whereClause} AND (created_at ${comparator} ? OR (created_at = ? AND id ${comparator} ?)) ORDER BY created_at ${order}, id ${order} LIMIT 1`, [...params, current.created_at, current.created_at, id]) || null;
+  }
+
+  async getQuestions(
+    userId: string,
+    page: number = 1,
+    pageSize: number = 20,
+    filter?: { categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] },
+    allowedCategoryIds?: string[]
+  ): Promise<{ questions: Question[]; total: number }> {
+    const { whereClause, params } = this.questionConditions(userId, filter, allowedCategoryIds);
     const offset = (page - 1) * pageSize;
 
     const questions = await this.all<Question>(
-      `SELECT * FROM questions WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM questions WHERE ${whereClause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
 
@@ -1073,47 +1185,66 @@ export class DatabaseManager {
     return updatedCount;
   }
 
-  async updateQuestion(id: string, data: Partial<Question>): Promise<Question | undefined> {
-    const fields: string[] = [];
-    const values: unknown[] = [];
+  async getQuestionVersions(id: string, page = 1, pageSize = 20, allowedCategoryIds?: string[]): Promise<{ data: QuestionVersion[]; total: number }> {
+    const categoryExpression = this.dbType === 'sqlite' ? "json_extract(snapshot, '$.category_id')" : "JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.category_id'))";
+    const scope = allowedCategoryIds?.length ? ` AND ${categoryExpression} IN (${allowedCategoryIds.map(() => '?').join(',')})` : '';
+    const params = [id, ...(allowedCategoryIds || [])];
+    const rows = await this.all<QuestionVersion>(`SELECT v.*, u.username AS actor_name FROM question_versions v LEFT JOIN users u ON u.id = v.actor_id WHERE question_id = ?${scope} ORDER BY version DESC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
+    const count = await this.get<{ count: number }>(`SELECT COUNT(*) AS count FROM question_versions WHERE question_id = ?${scope}`, params);
+    if (!count?.count) {
+      const anyVersion = await this.get<{ count: number }>('SELECT COUNT(*) AS count FROM question_versions WHERE question_id = ?', [id]);
+      if (anyVersion?.count) return { data: [], total: 0 };
+      const question = await this.getQuestionById(id);
+      return { data: question && page === 1 ? [{ id: '', question_id: id, version: question.revision || 1, snapshot: JSON.stringify(question), actor_id: null, source: 'initial', created_at: question.created_at }] : [], total: question ? 1 : 0 };
+    }
+    return { data: rows, total: count.count };
+  }
 
-    if (data.title !== undefined) {
-      fields.push('title = ?');
-      values.push(data.title);
-    }
-    if (data.content !== undefined) {
-      fields.push('content = ?');
-      values.push(data.content);
-    }
-    if (data.answer !== undefined) {
-      fields.push('answer = ?');
-      values.push(data.answer);
-    }
-    if (data.explanation !== undefined) {
-      fields.push('explanation = ?');
-      values.push(data.explanation);
-    }
-    if (data.difficulty !== undefined) {
-      fields.push('difficulty = ?');
-      values.push(data.difficulty);
-    }
-    if (data.category_id !== undefined) {
-      fields.push('category_id = ?');
-      values.push(data.category_id);
-    }
-    if (data.tags !== undefined) {
-      fields.push('tags = ?');
-      values.push(data.tags);
-    }
+  async getQuestionVersion(id: string, version: number): Promise<QuestionVersion | undefined> {
+    const row = await this.get<QuestionVersion>('SELECT * FROM question_versions WHERE question_id = ? AND version = ?', [id, version]);
+    if (row) return row;
+    const question = await this.getQuestionById(id);
+    if (question && version === (question.revision || 1)) return { id: '', question_id: id, version, snapshot: JSON.stringify(question), actor_id: null, source: 'initial', created_at: question.created_at };
+    return undefined;
+  }
 
-    if (fields.length === 0) return this.getQuestionById(id);
-
-    fields.push('updated_at = ?');
-    values.push(new Date().toISOString());
-    values.push(id);
-
-    await this.run(`UPDATE questions SET ${fields.join(', ')} WHERE id = ?`, values);
-    return this.getQuestionById(id);
+  async updateQuestion(id: string, data: Partial<Question>, options: { actorId?: string; source?: string; expectedRevision?: number; removeId?: string } = {}): Promise<Question | undefined> {
+    const editable = ['title', 'content', 'answer', 'explanation', 'difficulty', 'category_id', 'tags'] as const;
+    const prepare = (current: Question) => {
+      if (options.expectedRevision !== undefined && options.expectedRevision !== current.revision) throw new Error('QUESTION_CONFLICT');
+      const keys = editable.filter((key) => data[key] !== undefined && data[key] !== current[key]);
+      if (!keys.length && !options.removeId) return null;
+      const next: Question = { ...current, ...Object.fromEntries(keys.map((key) => [key, data[key]])), revision: (current.revision || 1) + 1, updated_at: new Date().toISOString() };
+      const statements = [
+        { sql: this.dbType === 'sqlite' ? 'INSERT OR IGNORE INTO question_versions (id, question_id, version, snapshot, actor_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)' : 'INSERT IGNORE INTO question_versions (id, question_id, version, snapshot, actor_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', params: [randomUUID(), id, current.revision || 1, JSON.stringify(current), null, 'initial', current.updated_at] },
+        { sql: `UPDATE questions SET ${keys.map((key) => `${key} = ?`).concat(['revision = ?', 'updated_at = ?']).join(', ')} WHERE id = ?`, params: [...keys.map((key) => next[key]), next.revision, next.updated_at, id] },
+        { sql: 'INSERT INTO question_versions (id, question_id, version, snapshot, actor_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', params: [randomUUID(), id, next.revision, JSON.stringify(next), options.actorId || null, options.source || 'edit', next.updated_at] },
+      ];
+      if (options.removeId) statements.push({ sql: 'DELETE FROM questions WHERE id = ?', params: [options.removeId] });
+      return { next, statements };
+    };
+    if (this.sqliteDb) {
+      const database = this.sqliteDb;
+      return database.transaction(() => {
+        const current = database.prepare('SELECT * FROM questions WHERE id = ?').get(id) as Question | undefined;
+        if (!current) return undefined;
+        const change = prepare(current);
+        if (!change) return current;
+        for (const statement of change.statements) database.prepare(statement.sql).run(...statement.params);
+        return change.next;
+      })();
+    }
+    const connection = await this.mysqlPool!.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<mysql.RowDataPacket[]>('SELECT * FROM questions WHERE id = ? FOR UPDATE', [id]);
+      const current = normalizeMySQLRows<Question>(rows)[0];
+      const change = current ? prepare(current) : null;
+      if (change) for (const statement of change.statements) await connection.execute(statement.sql, normalizeMySQLParams(statement.params, statement.sql));
+      await connection.commit();
+      return change?.next || current;
+    } catch (error) { await connection.rollback(); throw error; }
+    finally { connection.release(); }
   }
 
   async deleteQuestion(id: string): Promise<boolean> {
@@ -1123,6 +1254,11 @@ export class DatabaseManager {
 
   async deleteQuestions(ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
+    if (ids.length > 500) {
+      let deleted = 0;
+      for (let offset = 0; offset < ids.length; offset += 500) deleted += await this.deleteQuestions(ids.slice(offset, offset + 500));
+      return deleted;
+    }
     const placeholders = ids.map(() => '?').join(',');
     const result = await this.run(`DELETE FROM questions WHERE id IN (${placeholders})`, ids);
     return getChangedRows(result);
@@ -1146,28 +1282,13 @@ export class DatabaseManager {
     return getChangedRows(result);
   }
 
-  async upsertLearningProgress(progress: LearningProgress): Promise<LearningProgress> {
-    const existing = await this.get<LearningProgress>(
-      'SELECT * FROM learning_progress WHERE user_id = ? AND question_id = ? AND mode = ?',
-      [progress.user_id, progress.question_id, progress.mode]
-    );
-
-    if (existing) {
-      await this.run(
-        `UPDATE learning_progress 
-         SET last_viewed_at = ?, view_count = view_count + 1, is_bookmarked = ?
-         WHERE id = ?`,
-        [progress.last_viewed_at, progress.is_bookmarked ? 1 : 0, existing.id]
-      );
-      return { ...existing, ...progress, view_count: existing.view_count + 1 };
-    } else {
-      await this.run(
-        `INSERT INTO learning_progress (id, user_id, question_id, mode, last_viewed_at, view_count, is_bookmarked)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [progress.id, progress.user_id, progress.question_id, progress.mode, progress.last_viewed_at, 1, progress.is_bookmarked ? 1 : 0]
-      );
-      return progress;
-    }
+  async upsertLearningProgress(progress: LearningProgress, preserveBookmark = false): Promise<LearningProgress> {
+    const insert = `INSERT INTO learning_progress (id, user_id, question_id, mode, last_viewed_at, view_count, is_bookmarked) VALUES (?, ?, ?, ?, ?, 1, ?)`;
+    const update = this.dbType === 'sqlite'
+      ? ` ON CONFLICT(user_id, question_id, mode) DO UPDATE SET last_viewed_at = excluded.last_viewed_at, view_count = learning_progress.view_count + 1, is_bookmarked = ${preserveBookmark ? 'learning_progress.is_bookmarked' : 'excluded.is_bookmarked'}`
+      : ` ON DUPLICATE KEY UPDATE last_viewed_at = VALUES(last_viewed_at), view_count = view_count + 1, is_bookmarked = ${preserveBookmark ? 'is_bookmarked' : 'VALUES(is_bookmarked)'}`;
+    await this.run(insert + update, [progress.id, progress.user_id, progress.question_id, progress.mode, progress.last_viewed_at, progress.is_bookmarked ? 1 : 0]);
+    return (await this.getLearningProgress(progress.user_id, progress.question_id, progress.mode))!;
   }
 
   async getLearningProgress(userId: string, questionId: string, mode: string): Promise<LearningProgress | undefined> {
@@ -1279,7 +1400,7 @@ export class DatabaseManager {
     const conditions = ['q.user_id = ?', '(rs.id IS NULL OR rs.due_at <= ?)'];
     const whereParams: unknown[] = [libraryOwnerId, now];
     if (allowedCategoryIds && allowedCategoryIds.length > 0) {
-      conditions.push(`(q.category_id IS NULL OR q.category_id IN (${allowedCategoryIds.map(() => '?').join(',')}))`);
+      conditions.push(`q.category_id IN (${allowedCategoryIds.map(() => '?').join(',')})`);
       whereParams.push(...allowedCategoryIds);
     }
 
@@ -1334,7 +1455,7 @@ export class DatabaseManager {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     const categoryCondition = allowedCategoryIds && allowedCategoryIds.length > 0
-      ? ` AND (q.category_id IS NULL OR q.category_id IN (${allowedCategoryIds.map(() => '?').join(',')}))`
+      ? ` AND q.category_id IN (${allowedCategoryIds.map(() => '?').join(',')})`
       : '';
     const categoryParams = allowedCategoryIds && allowedCategoryIds.length > 0 ? allowedCategoryIds : [];
     const due = await this.get<{ count: number }>(
@@ -1678,6 +1799,7 @@ export class DatabaseManager {
       'users',
       'categories',
       'questions',
+      'question_versions',
       'learning_progress',
       'review_states',
       'review_events',
@@ -1698,6 +1820,7 @@ export class DatabaseManager {
       users: counts.users || 0,
       categories: counts.categories || 0,
       questions: counts.questions || 0,
+      question_versions: counts.question_versions || 0,
       learning_progress: counts.learning_progress || 0,
       review_states: counts.review_states || 0,
       review_events: counts.review_events || 0,
@@ -1708,29 +1831,39 @@ export class DatabaseManager {
   }
 
   async exportAllData(): Promise<Record<string, Record<string, unknown>[]>> {
-    return {
-      users: await this.all<Record<string, unknown>>('SELECT * FROM users ORDER BY created_at ASC'),
-      categories: await this.all<Record<string, unknown>>('SELECT * FROM categories ORDER BY created_at ASC'),
-      questions: await this.all<Record<string, unknown>>('SELECT * FROM questions ORDER BY created_at ASC'),
-      learning_progress: await this.all<Record<string, unknown>>('SELECT * FROM learning_progress ORDER BY last_viewed_at ASC'),
-      review_states: await this.all<Record<string, unknown>>('SELECT * FROM review_states ORDER BY due_at ASC'),
-      review_events: await this.all<Record<string, unknown>>('SELECT * FROM review_events ORDER BY reviewed_at ASC'),
-      ai_credentials: await this.all<Record<string, unknown>>('SELECT * FROM ai_credentials ORDER BY created_at ASC'),
-      ai_configs: await this.all<Record<string, unknown>>('SELECT * FROM ai_configs ORDER BY created_at ASC'),
-      system_settings: await this.all<Record<string, unknown>>('SELECT * FROM system_settings ORDER BY `key` ASC'),
-    };
+    const tables = ['users', 'categories', 'questions', 'question_versions', 'learning_progress', 'review_states', 'review_events', 'ai_credentials', 'ai_configs', 'system_settings'] as const;
+    if (this.sqliteDb) {
+      const database = this.sqliteDb;
+      return database.transaction(() => Object.fromEntries(tables.map((table) => [table, database.prepare(`SELECT * FROM ${table} ORDER BY ${table === 'system_settings' ? '`key`' : 'id'}`).all()])))() as Record<string, Record<string, unknown>[]>;
+    }
+    const connection = await this.mysqlPool!.getConnection();
+    try {
+      await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      await connection.beginTransaction();
+      const dataset: Record<string, Record<string, unknown>[]> = {};
+      for (const table of tables) {
+        const [rows] = await connection.query<mysql.RowDataPacket[]>(`SELECT * FROM ${table} ORDER BY ${table === 'system_settings' ? '`key`' : 'id'}`);
+        dataset[table] = normalizeMySQLRows<Record<string, unknown>>(rows);
+      }
+      await connection.commit();
+      return dataset;
+    } catch (error) { await connection.rollback(); throw error; }
+    finally { connection.release(); }
   }
 
   async replaceAllData(dataset: Record<string, Record<string, unknown>[]>): Promise<void> {
-    await this.run('DELETE FROM review_events');
-    await this.run('DELETE FROM review_states');
-    await this.run('DELETE FROM learning_progress');
-    await this.run('DELETE FROM questions');
-    await this.run('DELETE FROM categories');
-    await this.run('DELETE FROM ai_configs');
-    await this.run('DELETE FROM ai_credentials');
-    await this.run('DELETE FROM users');
-    await this.run('DELETE FROM system_settings');
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const collect = async (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); };
+    await collect('DELETE FROM review_events');
+    await collect('DELETE FROM review_states');
+    await collect('DELETE FROM learning_progress');
+    await collect('DELETE FROM question_versions');
+    await collect('DELETE FROM questions');
+    await collect('DELETE FROM categories');
+    await collect('DELETE FROM ai_configs');
+    await collect('DELETE FROM ai_credentials');
+    await collect('DELETE FROM users');
+    await collect('DELETE FROM system_settings');
 
     const restoredUsers = (dataset.users || []).map((row) => ({
       ...row,
@@ -1739,27 +1872,49 @@ export class DatabaseManager {
       library_owner_id: row.library_owner_id ?? null,
       category_scopes: row.category_scopes ?? '[]',
     }));
-    await this.bulkInsert('users', ['id', 'username', 'email', 'password_hash', 'must_change_password', 'role', 'user_type', 'library_owner_id', 'category_scopes', 'permissions', 'created_at', 'updated_at'], restoredUsers);
-    await this.bulkInsert('categories', ['id', 'name', 'description', 'parent_id', 'user_id', 'created_at', 'updated_at'], dataset.categories || []);
-    await this.bulkInsert('questions', ['id', 'title', 'content', 'answer', 'explanation', 'difficulty', 'category_id', 'user_id', 'tags', 'created_at', 'updated_at'], dataset.questions || []);
-    await this.bulkInsert('learning_progress', ['id', 'user_id', 'question_id', 'mode', 'last_viewed_at', 'view_count', 'is_bookmarked'], dataset.learning_progress || []);
-    await this.bulkInsert('review_states', ['id', 'user_id', 'question_id', 'due_at', 'interval_days', 'ease_factor', 'repetitions', 'lapses', 'last_rating', 'last_reviewed_at', 'updated_at'], dataset.review_states || []);
-    await this.bulkInsert('review_events', ['id', 'user_id', 'question_id', 'rating', 'reviewed_at', 'response_ms', 'created_at'], dataset.review_events || []);
+    await this.bulkInsert('users', ['id', 'username', 'email', 'password_hash', 'must_change_password', 'role', 'user_type', 'library_owner_id', 'category_scopes', 'permissions', 'created_at', 'updated_at'], restoredUsers, collect);
+    await this.bulkInsert('categories', ['id', 'name', 'description', 'parent_id', 'user_id', 'created_at', 'updated_at'], orderRestoredCategories(dataset.categories || []), collect);
+    await this.bulkInsert('questions', ['id', 'title', 'content', 'answer', 'explanation', 'difficulty', 'category_id', 'user_id', 'tags', 'created_at', 'updated_at', 'revision'], (dataset.questions || []).map((row) => ({ ...row, revision: row.revision ?? 1 })), collect);
+    await this.bulkInsert('question_versions', ['id', 'question_id', 'version', 'snapshot', 'actor_id', 'source', 'created_at'], dataset.question_versions || [], collect);
+    await this.bulkInsert('learning_progress', ['id', 'user_id', 'question_id', 'mode', 'last_viewed_at', 'view_count', 'is_bookmarked'], dataset.learning_progress || [], collect);
+    await this.bulkInsert('review_states', ['id', 'user_id', 'question_id', 'due_at', 'interval_days', 'ease_factor', 'repetitions', 'lapses', 'last_rating', 'last_reviewed_at', 'updated_at'], dataset.review_states || [], collect);
+    await this.bulkInsert('review_events', ['id', 'user_id', 'question_id', 'rating', 'reviewed_at', 'response_ms', 'created_at'], dataset.review_events || [], collect);
     const encryptedAICredentials = (dataset.ai_credentials || []).map((row) => ({
       ...row,
       api_key: typeof row.api_key === 'string' ? protectStoredSecret(row.api_key) : row.api_key,
     }));
-    await this.bulkInsert('ai_credentials', ['id', 'user_id', 'name', 'base_url', 'api_key', 'created_at', 'updated_at'], encryptedAICredentials);
+    await this.bulkInsert('ai_credentials', ['id', 'user_id', 'name', 'base_url', 'api_key', 'created_at', 'updated_at'], encryptedAICredentials, collect);
     const encryptedAIConfigs = (dataset.ai_configs || []).map((row) => ({
       ...row,
       api_key: typeof row.api_key === 'string' ? protectStoredSecret(row.api_key) : row.api_key,
       credential_id: row.credential_id ?? null,
     }));
-    await this.bulkInsert('ai_configs', ['id', 'user_id', 'provider', 'display_name', 'base_url', 'api_key', 'model', 'is_active', 'is_custom', 'credential_id', 'model_status', 'last_checked_at', 'last_check_error', 'created_at', 'updated_at'], encryptedAIConfigs);
-    await this.bulkInsert('system_settings', ['key', 'value', 'updated_at'], dataset.system_settings || []);
+    await this.bulkInsert('ai_configs', ['id', 'user_id', 'provider', 'display_name', 'base_url', 'api_key', 'model', 'is_active', 'is_custom', 'credential_id', 'model_status', 'last_checked_at', 'last_check_error', 'created_at', 'updated_at'], encryptedAIConfigs, collect);
+    await this.bulkInsert('system_settings', ['key', 'value', 'updated_at'], dataset.system_settings || [], collect);
+    if (this.dbType === 'sqlite' && this.sqliteDb) {
+      const database = this.sqliteDb;
+      database.transaction(() => {
+        for (const statement of statements) database.prepare(statement.sql).run(...statement.params);
+      })();
+      return;
+    }
+    if (!this.mysqlPool) throw new Error('Database not connected');
+    const connection = await this.mysqlPool.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const statement of statements) {
+        await connection.execute(statement.sql, normalizeMySQLParams(statement.params, statement.sql));
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
-  private async bulkInsert(table: string, columns: string[], rows: Record<string, unknown>[]): Promise<void> {
+  private async bulkInsert(table: string, columns: string[], rows: Record<string, unknown>[], execute: (sql: string, params: unknown[]) => Promise<unknown> = (sql, params) => this.run(sql, params)): Promise<void> {
     if (rows.length === 0) {
       return;
     }
@@ -1768,7 +1923,7 @@ export class DatabaseManager {
     const sql = `INSERT INTO ${table} (${columns.map((column) => (column === 'key' ? '`key`' : column)).join(', ')}) VALUES (${placeholders})`;
 
     for (const row of rows) {
-      await this.run(
+      await execute(
         sql,
         columns.map((column) => {
           const value = row[column];

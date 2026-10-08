@@ -1,5 +1,7 @@
 # 部署说明
 
+当前工作区部署详情见 [2026-10-08 部署记录](deployment-2026-10-08.md)。
+
 ## 1. 运行方式
 
 项目支持两种主要运行方式：
@@ -113,6 +115,12 @@ AI_ENABLED=true
 DEFAULT_AI_PROVIDER=deepseek
 AUTH_COOKIE_SECURE=auto
 ```
+
+`JWT_EXPIRES_IN` 是未设置站内登录有效期时的默认值；源码部署和发布镜像部署都会传入该变量。支持 `1m`、`12h`、`30d` 等正整数加单位（`s/m/h/d`），范围 1 分钟至 365 天；`forever` 表示不设置 JWT 过期时间。非法环境变量会阻止服务启动。
+
+`设置 → 系统管理 → 登录有效期` 保存的设置优先于环境变量，并存入数据库及完整备份。保存时更新当前登录；其他已有登录维持签发时的期限，下次登录采用新设置。只修改 `.env` 需要重建容器环境并重新登录才能改变现有登录期限。
+
+无限期 JWT 配合可续期的 400 天 Cookie；每次认证请求都会续期 Cookie，浏览器仍可能清理长期未使用的站点数据。[Chrome Cookie 有效期限制](https://developer.chrome.com/blog/cookie-max-age-expires)说明了浏览器端的上限。生产升级保持 `JWT_SECRET` 稳定，避免每次重启使所有账号退出；更换密钥会立即撤销所有既有令牌。
 
 当前 `compose.yaml` 固定使用 MariaDB 12.3.2（兼容 MySQL 协议），需要配置：
 

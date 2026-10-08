@@ -18,7 +18,7 @@ services:
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:10089,http://127.0.0.1:10089}
       - JWT_SECRET=${JWT_SECRET:?请在 .env 中设置随机 JWT_SECRET}
       - AI_CONFIG_ENCRYPTION_KEY=${AI_CONFIG_ENCRYPTION_KEY:?请在 .env 中设置 AI 配置加密密钥}
-      - JWT_EXPIRES_IN=7d
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
       - INIT_ADMIN_USERNAME=${INIT_ADMIN_USERNAME:-admin}
       - INIT_ADMIN_EMAIL=${INIT_ADMIN_EMAIL:-admin@localhost}
       - INIT_ADMIN_PASSWORD=${INIT_ADMIN_PASSWORD:-admin}

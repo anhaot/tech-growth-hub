@@ -1,16 +1,19 @@
 import { test, expect } from '@playwright/test';
-import { apiLogin, primeAuth, registerUser } from './utils';
+import { adminUser, apiBaseUrl, apiLogin, primeAuth, registerUser } from './utils';
 
 test('首次登录用户必须修改密码后才能进入系统', async ({ page, request }) => {
   const user = await registerUser(request, `first_login_${Date.now()}`);
   const login = await apiLogin(request, user.username, user.password);
-  await primeAuth(page, {
-    ...login,
-    user: {
-      ...login.user,
-      must_change_password: true,
-    },
-  });
+  const adminLogin = await apiLogin(request, adminUser.username, adminUser.password);
+  const headers = { Authorization: `Bearer ${adminLogin.token}` };
+  const backupResponse = await request.get(`${apiBaseUrl}/admin/backup/export`, { headers });
+  expect(backupResponse.ok()).toBeTruthy();
+  const backup = await backupResponse.json();
+  const storedUser = backup.dataset.users.find((entry: { id: string }) => entry.id === login.user.id);
+  storedUser.must_change_password = true;
+  const restore = await request.post(`${apiBaseUrl}/admin/backup/restore`, { headers, data: { dataset: backup.dataset } });
+  expect(restore.ok()).toBeTruthy();
+  await primeAuth(page, login);
 
   await page.goto('/');
   await expect(page).toHaveURL(/\/change-password$/);

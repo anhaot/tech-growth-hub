@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import type { User } from '../types/index.js';
 import { db } from '../database/index.js';
 import { authMiddleware, AuthRequest, getLibraryOwnerId, hasCategoryScopeAccess, requirePermission } from '../middleware/auth.js';
 
@@ -10,14 +11,28 @@ router.use(authMiddleware, requirePermission('category_view', '没有查看分�
 const createCategorySchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().optional().nullable(),
-  parentId: z.string().optional().nullable(),
+  parentId: z.string().uuid().optional().nullable(),
 });
 
 const updateCategorySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().optional().nullable(),
-  parentId: z.string().optional().nullable(),
+  parentId: z.string().uuid().optional().nullable(),
 });
+
+async function validateParent(user: User, ownerId: string, parentId?: string | null, categoryId?: string) {
+  const visited = new Set<string>();
+  let currentId = parentId;
+  while (currentId) {
+    if (currentId === categoryId || visited.has(currentId)) return '分类不能形成循环引用';
+    visited.add(currentId);
+    const parent = await db.getCategoryById(currentId);
+    if (!parent || parent.user_id !== ownerId) return '父分类不存在或不属于当前题库';
+    if (!hasCategoryScopeAccess(user, parent.id)) return '没有父分类的操作权限';
+    currentId = parent.parent_id;
+  }
+  return null;
+}
 
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
@@ -52,6 +67,12 @@ router.post('/', requirePermission('category_manage', '没有分类管理权限'
   try {
     const data = createCategorySchema.parse(req.body);
 
+    const parentError = await validateParent(req.user!, getLibraryOwnerId(req.user!), data.parentId);
+    if (parentError) {
+      res.status(400).json({ error: parentError });
+      return;
+    }
+
     const category = await db.createCategory({
       id: randomUUID(),
       name: data.name,
@@ -85,6 +106,12 @@ router.put('/:id', requirePermission('category_manage', '没有分类管理权�
     const ownerId = getLibraryOwnerId(req.user!);
     if ((category.user_id !== ownerId && req.user!.role !== 'admin') || !hasCategoryScopeAccess(req.user!, category.id)) {
       res.status(403).json({ error: '无权修改此分类' });
+      return;
+    }
+
+    const parentError = await validateParent(req.user!, category.user_id, data.parentId, category.id);
+    if (parentError) {
+      res.status(400).json({ error: parentError });
       return;
     }
 

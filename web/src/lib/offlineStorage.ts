@@ -27,10 +27,13 @@ async function runRequest<T>(storeName: string, mode: IDBTransactionMode, operat
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(storeName, mode);
     const request = operation(transaction.objectStore(storeName));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('离线数据操作失败'));
-    transaction.oncomplete = () => database.close();
-    transaction.onerror = () => reject(transaction.error || new Error('离线事务失败'));
+    let result: T;
+    request.onsuccess = () => { result = request.result; };
+    const fail = () => { database.close(); reject(transaction.error || request.error || new Error('离线事务失败')); };
+    request.onerror = fail;
+    transaction.onabort = fail;
+    transaction.onerror = fail;
+    transaction.oncomplete = () => { database.close(); resolve(result); };
   });
 }
 
@@ -39,13 +42,13 @@ export async function getInterviewDrafts(userId: string): Promise<InterviewDraft
   return new Promise((resolve, reject) => {
     const transaction = database.transaction('interviewDrafts', 'readonly');
     const request = transaction.objectStore('interviewDrafts').index('userId').getAll(userId);
-    request.onsuccess = () => resolve(
+    transaction.oncomplete = () => { database.close(); resolve(
       request.result
         .map(({ userId: _userId, ...draft }) => draft as InterviewDraft)
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    );
-    request.onerror = () => reject(request.error || new Error('读取面试草稿失败'));
-    transaction.oncomplete = () => database.close();
+    ); };
+    const fail = () => { database.close(); reject(transaction.error || request.error || new Error('读取面试草稿失败')); };
+    request.onerror = fail; transaction.onerror = fail; transaction.onabort = fail;
   });
 }
 
@@ -61,6 +64,7 @@ export async function removeInterviewDrafts(ids: string[]): Promise<void> {
     const store = transaction.objectStore('interviewDrafts');
     ids.forEach((id) => store.delete(id));
     transaction.oncomplete = () => { database.close(); resolve(); };
-    transaction.onerror = () => reject(transaction.error || new Error('删除面试草稿失败'));
+    const fail = () => { database.close(); reject(transaction.error || new Error('删除面试草稿失败')); };
+    transaction.onerror = fail; transaction.onabort = fail;
   });
 }

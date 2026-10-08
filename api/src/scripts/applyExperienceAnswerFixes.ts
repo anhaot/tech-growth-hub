@@ -1,4 +1,6 @@
 import mysql from 'mysql2/promise';
+import { randomUUID } from 'node:crypto';
+import { DatabaseManager } from '../database/index.js';
 import { config } from '../config/index.js';
 import {
   categoryExperienceAnswers,
@@ -15,6 +17,10 @@ async function main() {
     throw new Error('此修订脚本只允许在当前 MySQL/MariaDB 题库上执行');
   }
 
+  if (isApply) {
+    const database = new DatabaseManager(config.database, { skipDefaultAdmin: true });
+    try { await database.connect(); } finally { await database.close(); }
+  }
   const connection = await mysql.createConnection({
     host: config.database.mysql.host,
     port: config.database.mysql.port,
@@ -22,6 +28,8 @@ async function main() {
     password: config.database.mysql.password,
     database: config.database.mysql.database,
     charset: 'utf8mb4',
+    jsonStrings: true,
+    timezone: 'Z',
   });
 
   try {
@@ -70,17 +78,18 @@ async function main() {
 
     await connection.beginTransaction();
     try {
-      const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const now = new Date().toISOString();
       for (const item of proposed) {
-        const [result] = await connection.execute<mysql.ResultSetHeader>(
-          `UPDATE questions
-           SET answer = ?, updated_at = ?
-           WHERE id = ?`,
-          [item.newAnswer, now, item.id],
-        );
-        if (result.affectedRows !== 1) {
-          throw new Error(`更新题目失败：${item.id}`);
-        }
+        const [currentRows] = await connection.execute<mysql.RowDataPacket[]>('SELECT * FROM questions WHERE id = ? FOR UPDATE', [item.id]);
+        const row = currentRows[0];
+        if (!row || row.answer !== item.oldAnswer) throw new Error(`题目已变化，请重新预览：${item.id}`);
+        if (row.answer === item.newAnswer) continue;
+        const current = Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]));
+        const revision = Number(current.revision || 1);
+        await connection.execute('INSERT IGNORE INTO question_versions (id, question_id, version, snapshot, actor_id, source, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)', [randomUUID(), item.id, revision, JSON.stringify(current), 'initial', String(current.updated_at).replace('T', ' ').replace(/Z$/, '')]);
+        await connection.execute('UPDATE questions SET answer = ?, revision = ?, updated_at = ? WHERE id = ?', [item.newAnswer, revision + 1, now.replace('T', ' ').replace(/Z$/, ''), item.id]);
+        const next = { ...current, answer: item.newAnswer, revision: revision + 1, updated_at: now };
+        await connection.execute('INSERT INTO question_versions (id, question_id, version, snapshot, actor_id, source, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)', [randomUUID(), item.id, revision + 1, JSON.stringify(next), 'script:experience-fixes', now.replace('T', ' ').replace(/Z$/, '')]);
       }
       await connection.commit();
     } catch (error) {

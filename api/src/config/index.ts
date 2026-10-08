@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { resolveDatabaseConfigFromRuntime } from './databaseRuntime.js';
 import { DatabaseConnectionConfig, DatabaseRuntimeInfo } from '../types/index.js';
 import { validateAIConfigEncryptionKey } from '../utils/secretEncryption.js';
+import { parseSessionLifetime } from '../utils/sessionLifetime.js';
 
 type AIProvider = 'openai' | 'deepseek' | 'qwen' | 'doubao' | 'wenxin' | 'zhipu';
 
@@ -175,3 +176,4 @@ export const config: Config = {
 };
 
 logSecurityWarnings(config.nodeEnv, config.jwt.secret);
+parseSessionLifetime(config.jwt.expiresIn);

@@ -158,6 +158,12 @@ npm run e2e:headed
 - Cookie 写操作 CSRF 防护
 - AI Key 数据库与备份加密
 - 集成题库权限与首页统计
+- 登录有效期配置、Cookie/JWT 一致性、无限期登录续期与改密撤销
+- Bearer/Cookie 认证优先级与 CSRF 边界
+- 分类归属和循环引用、授权撤销后的收藏与进度过滤
+- CSV、JSON、Markdown、文本导入，以及题库 JSON 导出回导
+- 分页参数、自合并拒绝、管理员备份权限和恢复失败回滚
+- AI 地址协议、IPv4 映射 IPv6、重定向限制和响应体读取超时
 
 ### 前端 E2E
 
@@ -175,6 +181,7 @@ npm run e2e:headed
 目前覆盖重点：
 
 - 登录
+- 登录有效期保存、自定义时长、无限期登录与新浏览器会话恢复
 - 新建题目
 - AI 润色预览并保存
 - 备份导出与恢复
@@ -272,6 +279,9 @@ cd ../web && npm run build
 - 登录态优先走 `HttpOnly Cookie`
 - 仍兼容 `Authorization: Bearer`
 - Cookie 写请求必须携带匹配的 CSRF 令牌
+- 明确提供非空 Bearer 时优先认证该令牌；无效 Bearer 不会回退到 Cookie
+- 有效期取站内 `login_session_duration`，未设置时取 `JWT_EXPIRES_IN`
+- 新令牌绑定密码版本；改密撤销旧令牌并给当前设备签发新 Cookie
 - 权限有兼容映射关系
 - 集成用户要额外受分类范围限制
 
@@ -280,6 +290,10 @@ cd ../web && npm run build
 - 越权访问别人的题目
 - AI 路由绕过分类范围
 - 普通用户越权管理 AI 配置
+
+`POST /api/auth/session` 重新签发当前用户的登录 Cookie，用于显式应用新有效期。`forever` 不写入 JWT `exp`，认证请求续期 Cookie。旧版令牌在原期限内兼容；第一次改密后，旧版令牌也会被拒绝。
+
+E2E 默认使用 API `3102` 和 Web `4173`；端口冲突时可执行 `E2E_API_PORT=43102 E2E_WEB_PORT=44173 npm run e2e`。测试数据库和运行时配置按 API 端口隔离，测试不使用部署数据库。产品截图用例默认跳过，只有显式设置 `CAPTURE_README=1` 才会重拍文档图片。
 
 ---
 
@@ -363,3 +377,26 @@ cd web && npm run e2e
 - [operations.md](operations.md)
 - [ai.md](ai.md)
 - [permissions.md](permissions.md)
+
+## 题目版本与大题库接口
+
+- `GET /api/questions/:id/versions?page=1`：每页 20 个版本，可查看题目且历史分类在授权范围内才返回。
+- `POST /api/questions/:id/versions/:version/restore`：请求体 `{ "expectedRevision": 2 }`；需要内容和属性编辑权限，成功生成新版本。并发冲突返回 409。
+- `PUT /api/questions/:id`：支持 `expectedRevision` 与 `source`（`edit`、`ai-polish`、`ai-answer`），Web 保存均携带当前版本。
+- `GET /api/questions/position/:id?categoryId=...&tags[]=...`：返回筛选题集内从零开始的位置，不可见或不匹配时为 null。
+- `POST /api/questions/duplicates/scan`：启动整个授权题库扫描，返回任务 ID。
+- `GET /api/questions/duplicates/scan/:jobId?page=1&memberPage=1`：进度与结果；结果页每页 20 条，同标题组成员另按 20 道分页。
+- 旧 `/duplicates/similar` 接口保留，但新页面使用后台任务和轮询。
+
+`questions.revision` 在启动时为旧数据库补齐默认值 1；`question_versions` 保存 JSON 快照、版本、操作者和来源，参与备份与迁移。所有业务内容写入经过版本事务，删除题目级联删除版本；修订脚本同样保留快照。
+
+列表与学习按 `created_at DESC, id DESC` 排序。Web 学习保留当前 100 道，全库后台扫描每批读 1000 道且不设题目总量上限。查重候选索引与穷举评分对照验证，最多保留 10,000 个最高分结果，匹配总数单独统计。任务为进程内状态，部署多个实例时需要会话固定或改用持久队列。
+
+新增 API 回归覆盖版本冲突、回退、分类历史权限、旧备份、合并故障回滚、6005 道题跨页/全库扫描、万题密集重复、学习进度和持久 AI 开关。人工界面检查使用隔离题库；结果见[检查报告](project-audit-2026-10-08.md)。
+
+
+### 导入预览接口
+
+`POST /api/import/preview/csv|json|markdown` 使用 multipart 的 `file` 和可选 `categoryId`；`POST /api/import/preview/text` 使用 `{questions, categoryId}`。响应含预览 ID、到期时间、总数/有效数/错误数及当前 20 条数据。`GET /api/import/preview/:id?page=N` 读取后续页；`POST /api/import/preview/:id/commit` 的 `{excludedRows: number[]}` 按原始条号排除题目，其余有效条目导入。CSV 条号包含表头偏移。
+
+预览属于发起账号，授权变化要求重建，提交重新检查分类。相同 ID 的成功提交结果保留 15 分钟以便重试，不重复写入。预览队列保存在进程内，全局最多 8 个，每账号新预览会替换之前已就绪或完成的预览；多实例需要固定到同一实例。共享解析器同时用于兼容导入接口，避免预览与导入解析规则漂移。

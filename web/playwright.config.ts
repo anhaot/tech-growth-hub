@@ -2,8 +2,8 @@ import { defineConfig } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const apiPort = 3102;
-const webPort = 4173;
+const apiPort = Number(process.env.E2E_API_PORT || 3102);
+const webPort = Number(process.env.E2E_WEB_PORT || 4173);
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({

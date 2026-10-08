@@ -10,6 +10,7 @@ import {
   AIModelInfo,
   PaginatedResult,
   ImportResult,
+  ImportPreview,
   AIStatus,
   UserPermissions,
   TagSummary,
@@ -20,6 +21,8 @@ import {
   DatabaseCounts,
   DatabaseInfo,
   SimilarQuestionPair,
+  QuestionVersion,
+  DuplicateScanResult,
   BackupPayload,
 } from '@/types';
 import { clearStoredAuthState } from '@/store';
@@ -86,6 +89,7 @@ export const authApi = {
     api.post<{ user: User; token: string }>('/auth/login', data),
 
   logout: () => api.post<{ message: string }>('/auth/logout', {}),
+  refreshSession: () => api.post<{ message: string }>('/auth/session', {}),
   
   getMe: () => api.get<User>('/auth/me'),
   
@@ -108,6 +112,11 @@ export const categoryApi = {
 };
 
 export const questionApi = {
+  getPosition: (id: string, params?: { categoryId?: string; tags?: string[] }) => api.get<{ index: number | null }>(`/questions/position/${id}`, { params }),
+  getVersions: (id: string, page = 1) => api.get<PaginatedResult<QuestionVersion>>(`/questions/${id}/versions`, { params: { page } }),
+  restoreVersion: (id: string, version: number, expectedRevision: number) => api.post<Question>(`/questions/${id}/versions/${version}/restore`, { expectedRevision }),
+  startDuplicateScan: () => api.post<{ id: string }>('/questions/duplicates/scan'),
+  getDuplicateScan: (id: string, page = 1, memberPage = 1) => api.get<DuplicateScanResult>(`/questions/duplicates/scan/${id}`, { params: { page, memberPage } }),
   getAll: (params?: { page?: number; pageSize?: number; categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] }) =>
     api.get<PaginatedResult<Question>>('/questions', { params }),
 
@@ -148,7 +157,7 @@ export const questionApi = {
   create: (data: { title: string; content: string; answer?: string; explanation?: string; difficulty?: string; categoryId?: string; tags?: string[] }) =>
     api.post<Question>('/questions', data),
   
-  update: (id: string, data: Partial<{ title: string; content: string; answer: string; explanation: string; difficulty: string; categoryId: string; tags: string[] }>) =>
+  update: (id: string, data: Partial<{ source: 'edit' | 'ai-polish' | 'ai-answer'; expectedRevision: number; title: string; content: string; answer: string; explanation: string; difficulty: string; categoryId: string; tags: string[] }>) =>
     api.put<Question>(`/questions/${id}`, data),
   
   delete: (id: string) => api.delete(`/questions/${id}`),
@@ -176,6 +185,14 @@ export const questionApi = {
 };
 
 export const importApi = {
+  previewFile: (format: 'csv' | 'json' | 'markdown', file: File, categoryId?: string) => {
+    const data = new FormData(); data.append('file', file);
+    if (categoryId) data.append('categoryId', categoryId);
+    return api.post<ImportPreview>(`/import/preview/${format}`, data, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  previewText: (questions: unknown[], categoryId?: string) => api.post<ImportPreview>('/import/preview/text', { questions, categoryId }),
+  getPreview: (id: string, page: number) => api.get<ImportPreview>(`/import/preview/${id}`, { params: { page } }),
+  commitPreview: (id: string, excludedRows: number[]) => api.post<ImportResult>(`/import/preview/${id}/commit`, { excludedRows }),
   importCsv: (file: File, categoryId?: string) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -366,7 +383,7 @@ export const adminApi = {
   
   deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
 
-  getSettings: () => api.get<{ allowRegister: boolean; tagAliases?: Record<string, string> }>('/admin/settings'),
+  getSettings: () => api.get<{ allowRegister: boolean; tagAliases?: Record<string, string>; loginSessionDuration: string }>('/admin/settings'),
   
   updateSetting: (key: string, value: string) =>
     api.put(`/admin/settings/${key}`, { value }),

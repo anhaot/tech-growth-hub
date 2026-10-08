@@ -134,6 +134,8 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
       const nextTags = Array.from(new Set([...existingTags, ...selectedTags])).slice(0, MAX_QUESTION_TAGS);
 
       await questionApi.update(question.id, {
+          source: 'ai-answer',
+          expectedRevision: question.revision,
         answer: draft.answer,
         explanation: nextExplanation,
         tags: nextTags,

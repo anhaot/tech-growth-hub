@@ -48,6 +48,7 @@ export interface Category {
 }
 
 export interface Question {
+  revision?: number;
   id: string;
   title: string;
   content: string;
@@ -223,6 +224,7 @@ export interface DatabaseTableCountSummary {
   users: number;
   categories: number;
   questions: number;
+  question_versions: number;
   learning_progress: number;
   review_states: number;
   review_events: number;
@@ -235,4 +237,15 @@ export interface DatabaseValidationReport {
   source: DatabaseTableCountSummary;
   target: DatabaseTableCountSummary;
   matches: boolean;
+}
+
+export interface QuestionVersion {
+  id: string;
+  question_id: string;
+  version: number;
+  snapshot: string;
+  actor_id: string | null;
+  actor_name?: string | null;
+  source: string;
+  created_at: string;
 }

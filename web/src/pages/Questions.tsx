@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { questionApi, categoryApi, importApi, aiApi } from '@/api';
-import { Question, Category, PaginatedResult, SimilarQuestionPair, AIConfig, AIModelOption } from '@/types';
+import { Question, Category, PaginatedResult, SimilarQuestionPair, DuplicateScanResult, AIConfig, AIModelOption } from '@/types';
 import { useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
 import { getTagColorClasses } from '@/lib/tagColors';
@@ -8,6 +8,8 @@ import { MAX_QUESTION_TAGS, parseQuestionTags } from '@/lib/questionTags';
 import { renderSafeMarkdown } from '@/lib/renderMarkdown';
 import { applyTagSuggestion, getFilteredTagSuggestions } from '@/lib/tagSuggestions';
 import { formatStructuredDraftText } from '@/lib/aiDraftFormatting';
+import ImportModal from '@/components/ImportModal';
+import QuestionHistoryModal from '@/components/QuestionHistoryModal';
 import AIAnswerDraftModal from '@/components/AIAnswerDraftModal';
 import { LoadingSpinner } from '@/components/ui';
 import { toast } from 'react-hot-toast';
@@ -31,35 +33,6 @@ import {
   MoreHorizontal,
 } from 'lucide-react';
 
-const AI_IMPORT_PROMPT_TEMPLATE = `请按 JSON 返回一组适合记忆背题的题目，不要输出任何解释性文字。
-
-要求：
-1. 返回格式必须是 JSON 数组
-2. 每一项包含 title、content、answer、explanation、difficulty、tags
-3. difficulty 只能是 easy、medium、hard
-4. answer 要准确、简洁、利于记忆
-5. explanation 用于背题时快速理解
-6. tags 为可选字段，如有标签，每题最多 5 个
-
-示例：
-[
-  {
-    "title": "HTTP 常见状态码",
-    "content": "说出 200、301、404、500 的含义。",
-    "answer": "200 成功；301 永久重定向；404 资源不存在；500 服务器内部错误。",
-    "explanation": "这几个状态码是 Web 开发最常见的排障基础。",
-    "difficulty": "easy",
-    "tags": ["HTTP", "状态码"]
-  },
-  {
-    "title": "什么是 Docker 镜像",
-    "content": "说明 Docker 镜像的含义。",
-    "answer": "Docker 镜像是用于创建容器的只读模板。",
-    "explanation": "题目没有标签也可以正常导入。",
-    "difficulty": "easy"
-  }
-]`;
-
 interface QuestionListFilter {
   categoryId: string;
   difficulty: string;
@@ -77,12 +50,12 @@ const defaultQuestionFilter: QuestionListFilter = {
 const questionListCache = new Map<string, PaginatedResult<Question>>();
 
 const getQuestionListCacheKey = (
-  userId: string,
+  scope: string,
   page: number,
   pageSize: number,
   filter: QuestionListFilter
 ) => [
-  userId,
+  scope,
   page,
   pageSize,
   filter.categoryId,
@@ -93,6 +66,7 @@ const getQuestionListCacheKey = (
 
 export const QuestionsPage: React.FC = () => {
   const { user } = useAuthStore();
+  const cacheScope = JSON.stringify([user?.id, user?.role, user?.user_type, user?.library_owner_id, user?.category_scopes, user?.permissions]);
   const canManageQuestions = hasPermission(user, 'question_view');
   const canCreateQuestions = hasPermission(user, 'question_create');
   const canEditQuestionContent = hasPermission(user, 'question_edit_content');
@@ -107,7 +81,7 @@ export const QuestionsPage: React.FC = () => {
   const canGenerateQuestions = hasPermission(user, 'ai_generate');
   const canCheckDuplicates = hasPermission(user, 'duplicate_manage');
   const canAIPolish = canUseAI && hasPermission(user, 'ai_polish');
-  const initialQuestionCache = questionListCache.get(getQuestionListCacheKey(user?.id || '', 1, 50, defaultQuestionFilter));
+  const initialQuestionCache = questionListCache.get(getQuestionListCacheKey(cacheScope, 1, 50, defaultQuestionFilter));
   const [questions, setQuestions] = useState<PaginatedResult<Question> | null>(initialQuestionCache || null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(!initialQuestionCache);
@@ -131,12 +105,20 @@ export const QuestionsPage: React.FC = () => {
   const [answerDraftQuestion, setAnswerDraftQuestion] = useState<Question | null>(null);
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [historyQuestion, setHistoryQuestion] = useState<Question | null>(null);
+  const [scanResult, setScanResult] = useState<DuplicateScanResult | null>(null);
+  const [scanError, setScanError] = useState('');
+  const scanSequence = useRef(0);
+  const listSequence = useRef(0);
   const [duplicates, setDuplicates] = useState<Array<{ title: string; count: number; questions: Question[] }>>([]);
   const [similarDuplicates, setSimilarDuplicates] = useState<SimilarQuestionPair[]>([]);
   const [pageSize, setPageSize] = useState(50);
+  const allPageSelected = Boolean(questions?.data.length && questions.data.every((question) => selectedIds.includes(question.id)));
+  const [exportFormat, setExportFormat] = useState<'json' | 'markdown'>('json');
 
   const fetchQuestions = async () => {
-    const cacheKey = getQuestionListCacheKey(user?.id || '', page, pageSize, filter);
+    const sequence = ++listSequence.current;
+    const cacheKey = getQuestionListCacheKey(cacheScope, page, pageSize, filter);
     const cached = questionListCache.get(cacheKey);
     if (cached) {
       setQuestions(cached);
@@ -150,12 +132,16 @@ export const QuestionsPage: React.FC = () => {
         pageSize,
         ...filter,
       });
+      if (sequence !== listSequence.current) return;
+      const lastPage = Math.max(1, response.data.totalPages);
+      if (page > lastPage) { setPage(lastPage); return; }
+      if (questionListCache.size >= 30) questionListCache.delete(questionListCache.keys().next().value!);
       questionListCache.set(cacheKey, response.data);
       setQuestions(response.data);
     } catch (error) {
-      toast.error('获取题目列表失败');
+      if (sequence === listSequence.current) toast.error('获取题目列表失败');
     } finally {
-      setLoading(false);
+      if (sequence === listSequence.current) setLoading(false);
     }
   };
 
@@ -181,39 +167,33 @@ export const QuestionsPage: React.FC = () => {
     }
   };
 
-  const checkDuplicates = async () => {
-    try {
-      const response = await questionApi.getAll({ page: 1, pageSize: 1000 });
-      const allQuestions = response.data.data;
-      const similarResponse = await questionApi.getSimilarDuplicates();
-      
-      const titleMap = new Map<string, Question[]>();
-      allQuestions.forEach((q) => {
-        const normalizedTitle = q.title.trim().toLowerCase();
-        if (!titleMap.has(normalizedTitle)) {
-          titleMap.set(normalizedTitle, []);
-        }
-        titleMap.get(normalizedTitle)!.push(q);
-      });
-
-      const duplicateList: Array<{ title: string; count: number; questions: Question[] }> = [];
-      titleMap.forEach((questionsList) => {
-        if (questionsList.length > 1) {
-          duplicateList.push({
-            title: questionsList[0].title,
-            count: questionsList.length,
-            questions: questionsList,
-          });
-        }
-      });
-
-      setDuplicates(duplicateList);
-      setSimilarDuplicates(similarResponse.data.pairs);
-      setShowDuplicateModal(true);
-    } catch (error) {
-      toast.error('检查重复题目失败');
-    }
+  const applyScanResult = (result: DuplicateScanResult) => {
+    setScanResult(result); setDuplicates(result.groups); setSimilarDuplicates(result.pairs);
   };
+  const checkDuplicates = async () => {
+    const sequence = ++scanSequence.current;
+    setShowDuplicateModal(true); setScanResult(null); setScanError(''); setDuplicates([]); setSimilarDuplicates([]);
+    try {
+      const { data } = await questionApi.startDuplicateScan();
+      while (sequence === scanSequence.current) {
+        const response = await questionApi.getDuplicateScan(data.id);
+        if (sequence !== scanSequence.current) return;
+        applyScanResult(response.data);
+        if (response.data.status === 'failed') throw new Error('扫描失败，请重新检查');
+        if (response.data.status === 'completed') break;
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+      }
+    } catch (error: any) { if (sequence === scanSequence.current) setScanError(error.response?.data?.error || error.message || '检查重复题目失败'); }
+  };
+  const changeScanPage = async (nextPage: number, memberPage = 1) => {
+    if (!scanResult) return;
+    const sequence = scanSequence.current;
+    try {
+      const response = await questionApi.getDuplicateScan(scanResult.id, nextPage, memberPage);
+      if (sequence === scanSequence.current) applyScanResult(response.data);
+    } catch (error: any) { toast.error(error.response?.data?.error || '加载结果失败'); }
+  };
+  useEffect(() => () => { scanSequence.current++; listSequence.current++; }, []);
 
   const deleteDuplicate = async (_keepId: string, deleteIds: string[]) => {
     try {
@@ -227,12 +207,13 @@ export const QuestionsPage: React.FC = () => {
   };
 
   useEffect(() => {
+    setSelectedIds([]);
     fetchCategories();
-  }, []);
+  }, [cacheScope]);
 
   useEffect(() => {
     fetchQuestions();
-  }, [page, filter, pageSize]);
+  }, [page, filter, pageSize, cacheScope]);
 
   useEffect(() => {
     fetchTags();
@@ -349,11 +330,12 @@ export const QuestionsPage: React.FC = () => {
         return text;
       }).join('\n');
 
-      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const serialized = exportFormat === 'json' ? JSON.stringify({ formatVersion: 1, questions: exportData }, null, 2) : markdown;
+      const blob = new Blob([serialized], { type: exportFormat === 'json' ? 'application/json' : 'text/markdown' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `题库导出_${new Date().toISOString().split('T')[0]}.md`;
+      a.download = `题库导出_${new Date().toISOString().split('T')[0]}.${exportFormat === 'json' ? 'json' : 'md'}`;
       a.click();
       URL.revokeObjectURL(url);
       
@@ -364,11 +346,10 @@ export const QuestionsPage: React.FC = () => {
   };
 
   const handleSelectAll = () => {
-    if (selectedIds.length === questions?.data.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(questions?.data.map((q) => q.id) || []);
-    }
+    const pageIds = questions?.data.map((question) => question.id) || [];
+    setSelectedIds((previous) => allPageSelected
+      ? previous.filter((id) => !pageIds.includes(id))
+      : Array.from(new Set([...previous, ...pageIds])));
   };
 
   const handleSelect = (id: string) => {
@@ -447,13 +428,13 @@ export const QuestionsPage: React.FC = () => {
               </button>
             ) : null}
             {canExportQuestions ? (
-              <button
+              <><select aria-label="导出格式" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as 'json' | 'markdown')} className={`${showMobileActions ? 'inline-flex' : 'hidden'} rounded-xl border border-gray-200 px-2 text-sm lg:inline-flex`}><option value="json">JSON 完整字段</option><option value="markdown">Markdown 阅读版</option></select><button
                 onClick={handleExport}
                 className={`${showMobileActions ? 'inline-flex' : 'hidden'} items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-700 transition-colors hover:bg-gray-50 lg:inline-flex lg:px-4`}
               >
                 <Download size={18} className="text-emerald-500" />
                 导出
-              </button>
+              </button></>
             ) : null}
             {canDeleteQuestions ? (
               <button
@@ -670,7 +651,8 @@ export const QuestionsPage: React.FC = () => {
                     <div className="flex items-start gap-2.5">
                       {canSelectQuestions ? (
                         <button
-                          onClick={() => handleSelect(question.id)}
+                          aria-label={`${selectedIds.includes(question.id) ? '取消选择' : '选择'}题目：${question.title}`}
+                              onClick={() => handleSelect(question.id)}
                           className={`mt-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
                             selected ? 'bg-purple-500 border-purple-500 text-white' : 'border-gray-300'
                           }`}
@@ -692,7 +674,7 @@ export const QuestionsPage: React.FC = () => {
                           </span>
                         </div>
                       </div>
-                      {(canAIPolish || canEditQuestions || canDeleteQuestions) ? (
+                      {hasPermission(user, 'question_view') ? (
                         <button
                           type="button"
                           aria-label="打开题目操作"
@@ -704,6 +686,7 @@ export const QuestionsPage: React.FC = () => {
                       ) : null}
                       {openMobileQuestionMenuId === question.id ? (
                         <div className="absolute right-2 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                          <button onClick={() => { setHistoryQuestion(question); setOpenMobileQuestionMenuId(null); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-700">版本历史</button>
                           {canAIPolish ? (
                             <button
                               onClick={() => {
@@ -769,14 +752,15 @@ export const QuestionsPage: React.FC = () => {
                     {canSelectQuestions ? (
                       <th className="text-left py-4 px-4 w-12">
                         <button
+                          aria-label={allPageSelected ? '取消选择本页全部题目' : '选择本页全部题目'}
                           onClick={handleSelectAll}
                           className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                            selectedIds.length === questions?.data.length
+                            allPageSelected
                               ? 'bg-purple-500 border-purple-500 text-white'
                               : 'border-gray-300 hover:border-purple-400'
                           }`}
                         >
-                          {selectedIds.length === questions?.data.length && <Check size={14} />}
+                          {allPageSelected && <Check size={14} />}
                         </button>
                       </th>
                     ) : null}
@@ -802,6 +786,7 @@ export const QuestionsPage: React.FC = () => {
                         {canSelectQuestions ? (
                           <td className="py-4 px-4">
                             <button
+                              aria-label={`${selectedIds.includes(question.id) ? '取消选择' : '选择'}题目：${question.title}`}
                               onClick={() => handleSelect(question.id)}
                               className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
                                 selectedIds.includes(question.id)
@@ -843,6 +828,7 @@ export const QuestionsPage: React.FC = () => {
                         </td>
                         <td className="py-4 px-4">
                           <div className="flex items-center gap-1">
+                            <button title="版本历史" aria-label={`版本历史：${question.title}`} onClick={() => setHistoryQuestion(question)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg text-xs">历史</button>
                             {canAIPolish ? (
                               <button
                                 onClick={() => openAnswerDraftModal(question)}
@@ -935,6 +921,7 @@ export const QuestionsPage: React.FC = () => {
         )}
       </div>
 
+      <QuestionHistoryModal question={historyQuestion} onClose={() => setHistoryQuestion(null)} onRestored={(question) => { setHistoryQuestion(question); questionListCache.clear(); fetchQuestions(); }} />
       <QuestionModal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
@@ -968,7 +955,13 @@ export const QuestionsPage: React.FC = () => {
 
       <DuplicateModal
         isOpen={showDuplicateModal}
-        onClose={() => setShowDuplicateModal(false)}
+        onClose={() => { setShowDuplicateModal(false); scanSequence.current++; }}
+        scanResult={scanResult}
+        error={scanError}
+        onRetry={checkDuplicates}
+        onPageChange={changeScanPage}
+        canDelete={canDeleteQuestions}
+        canMerge={canDeleteQuestions && canEditQuestions && hasPermission(user, 'question_edit_meta') && hasPermission(user, 'question_edit_content')}
         duplicates={duplicates}
         similarPairs={similarDuplicates}
         onDeleteDuplicate={deleteDuplicate}
@@ -1152,7 +1145,8 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
           data.categoryId = formData.categoryId;
           data.tags = parseQuestionTags(formData.tags);
         }
-        await questionApi.update(question.id, data);
+        await questionApi.update(question.id, {
+          ...data, expectedRevision: question.revision });
         toast.success('更新成功');
       } else {
         await questionApi.create({
@@ -1320,275 +1314,13 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
   );
 };
 
-interface ImportModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  categories: Category[];
-  onSuccess: () => void;
-}
-
-const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, onSuccess }) => {
-  const [loading, setLoading] = useState(false);
-  const [importType, setImportType] = useState<'csv' | 'json' | 'markdown' | 'ai'>('markdown');
-  const [categoryId, setCategoryId] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [aiText, setAiText] = useState('');
-  const [result, setResult] = useState<{ success: number; failed: number; errors: any[] } | null>(null);
-
-  const csvExample = `内容,答案,难度,解析,标签
-什么是HTTP协议?,HTTP是HyperText Transfer Protocol的缩写，即超文本传输协议。,medium,HTTP协议定义了客户端和服务器之间的通信规则,"HTTP,协议"`;
-
-  const jsonExample = `[
-  {
-    "content": "什么是Docker?",
-    "answer": "Docker是一个开源的应用容器引擎。",
-    "difficulty": "easy",
-    "tags": ["docker", "容器"]
-  },
-  {
-    "content": "什么是容器编排?",
-    "answer": "容器编排是对多个容器进行自动化部署、调度和管理。",
-    "difficulty": "medium"
-  }
-]`;
-
-  const markdownExample = `**什么是Kubernetes?**
-答案：Kubernetes是一个开源的容器编排平台。
-标签：kubernetes, 容器
-
-**Docker和K8s的区别是什么？**
-答案：Docker是容器运行时，K8s是容器编排平台。
-标签：docker, kubernetes`;
-
-  const downloadExample = () => {
-    let content = '';
-    let filename = '';
-    
-    if (importType === 'csv') {
-      content = csvExample;
-      filename = '题目导入样例.csv';
-    } else if (importType === 'json') {
-      content = jsonExample;
-      filename = '题目导入样例.json';
-    } else if (importType === 'markdown') {
-      content = markdownExample;
-      filename = '题目导入样例.md';
-    } else {
-      content = AI_IMPORT_PROMPT_TEMPLATE;
-      filename = 'AI生题提示词.txt';
-    }
-    
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImport = async () => {
-    if (importType !== 'ai' && !file) {
-      toast.error('请选择文件');
-      return;
-    }
-
-    if (importType === 'ai' && !aiText.trim()) {
-      toast.error('请粘贴AI生成的JSON内容');
-      return;
-    }
-
-    setLoading(true);
-    setResult(null);
-
-    try {
-      let response;
-      if (importType === 'csv') {
-        response = await importApi.importCsv(file!, categoryId);
-      } else if (importType === 'json') {
-        response = await importApi.importJson(file!, categoryId);
-      } else if (importType === 'markdown') {
-        response = await importApi.importMarkdown(file!, categoryId);
-      } else {
-        const parsed = JSON.parse(aiText);
-        const questions = Array.isArray(parsed) ? parsed : parsed.questions;
-        if (!Array.isArray(questions) || questions.length === 0) {
-          throw new Error('AI内容不是可导入的题目数组');
-        }
-        response = await importApi.importText(
-          questions.map((q: any) => ({
-            title: q.title || q.content?.slice(0, 100) || '未命名题目',
-            content: q.content,
-            answer: q.answer,
-            explanation: q.explanation || '',
-            difficulty: q.difficulty || 'medium',
-            tags: Array.isArray(q.tags) ? q.tags : [],
-          })),
-          categoryId || undefined
-        );
-      }
-
-      setResult(response.data);
-      toast.success(`成功导入 ${response.data.success} 道题目`);
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '导入失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleClose = () => {
-    if (result?.success) {
-      onSuccess();
-    }
-    setResult(null);
-    setFile(null);
-    setAiText('');
-    onClose();
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-transparent" onClick={handleClose} />
-      <div className="relative flex min-h-full items-center justify-center px-4 py-6">
-      <div className="app-modal-panel w-full max-w-2xl max-h-[90vh] overflow-hidden">
-        <div className="app-modal-header flex items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg">
-              <Upload className="w-5 h-5 text-white" />
-            </div>
-            <h2 className="text-lg font-semibold text-gray-900">导入题目</h2>
-          </div>
-          <button onClick={handleClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-5 overflow-y-auto max-h-[calc(90vh-140px)]">
-        <div className="flex gap-2">
-          {(['csv', 'json', 'markdown', 'ai'] as const).map((type) => (
-            <button
-              key={type}
-              onClick={() => setImportType(type)}
-              className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-colors ${
-                  importType === type
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {type === 'csv' ? 'CSV格式' : type === 'json' ? 'JSON格式' : type === 'markdown' ? 'Markdown格式' : 'AI粘贴导入'}
-              </button>
-            ))}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">导入到分类（可选）</label>
-            <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="select-field w-full px-4 pr-10 py-3 text-gray-700 bg-gray-50 focus:bg-white cursor-pointer"
-            >
-              <option value="">不指定分类</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {importType === 'ai' ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">AI 生成后直接粘贴 JSON</p>
-                    <p className="text-sm text-gray-600">适合先让 ChatGPT / DeepSeek / 豆包批量生成，再一键导入题库。</p>
-                  </div>
-                  <button
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(AI_IMPORT_PROMPT_TEMPLATE);
-                      toast.success('AI提示词已复制');
-                    }}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50"
-                  >
-                    <Sparkles size={16} />
-                    复制提示词
-                  </button>
-                </div>
-              </div>
-              <textarea
-                value={aiText}
-                onChange={(e) => setAiText(e.target.value)}
-                rows={10}
-                placeholder="把 AI 返回的 JSON 数组粘贴到这里"
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 focus:bg-white transition-all font-mono text-sm"
-              />
-            </div>
-          ) : (
-            <div className="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center hover:border-gray-300 transition-colors">
-              <input
-                type="file"
-                accept={importType === 'csv' ? '.csv' : importType === 'json' ? '.json' : '.md,.markdown,.txt'}
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="hidden"
-                id="file-upload"
-              />
-              <label htmlFor="file-upload" className="cursor-pointer">
-                <div className="p-3 bg-gray-100 rounded-lg inline-flex mb-3">
-                  <Upload className="h-6 w-6 text-gray-600" />
-                </div>
-                <p className="text-gray-700 font-medium">{file ? file.name : '点击上传文件'}</p>
-                <p className="text-sm text-gray-400 mt-1">支持 {importType.toUpperCase()} 格式</p>
-              </label>
-            </div>
-          )}
-
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <div className="flex items-center justify-between mb-3">
-              <p className="font-medium text-gray-800">文件格式样例</p>
-              <button onClick={downloadExample} className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1">
-                <Download size={14} />
-                下载样例
-              </button>
-            </div>
-            <pre className="text-xs text-gray-700 bg-white p-3 rounded-lg overflow-x-auto max-h-32 whitespace-pre-wrap border border-gray-200">
-              {importType === 'csv' ? csvExample : importType === 'json' ? jsonExample : importType === 'markdown' ? markdownExample : AI_IMPORT_PROMPT_TEMPLATE}
-            </pre>
-          </div>
-
-          {result && (
-            <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-              <p className="text-green-700 font-medium">成功导入：{result.success} 道</p>
-              {result.failed > 0 && <p className="text-red-600 text-sm mt-1">失败：{result.failed} 道</p>}
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 bg-gray-50/50">
-          <button
-            onClick={handleClose}
-            className="px-5 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            关闭
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={loading || (importType === 'ai' ? !aiText.trim() : !file)}
-            className="px-5 py-2.5 bg-primary-600 rounded-lg text-white hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? '导入中...' : '开始导入'}
-          </button>
-        </div>
-      </div>
-      </div>
-    </div>
-  );
-};
-
 interface DuplicateModalProps {
+  scanResult: DuplicateScanResult | null;
+  error: string;
+  onRetry: () => void;
+  onPageChange: (page: number, memberPage?: number) => void;
+  canDelete: boolean;
+  canMerge: boolean;
   isOpen: boolean;
   onClose: () => void;
   duplicates: Array<{ title: string; count: number; questions: Question[] }>;
@@ -1597,7 +1329,7 @@ interface DuplicateModalProps {
   onMergeDuplicate: (keepId: string, removeId: string) => void;
 }
 
-const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplicates, similarPairs, onDeleteDuplicate, onMergeDuplicate }) => {
+const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplicates, similarPairs, onDeleteDuplicate, onMergeDuplicate, scanResult, error, onRetry, onPageChange, canDelete, canMerge }) => {
   if (!isOpen) return null;
 
   return (
@@ -1618,6 +1350,8 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
         </div>
 
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+          {error ? <div role="alert" className="text-red-600">{error}<button onClick={onRetry} className="ml-3 underline">重新检查</button></div> : !scanResult || scanResult.status === 'running' ? <p role="status">正在检查整个题库… 已扫描 {scanResult?.processed || 0} / {scanResult?.totalQuestions || 0} 道</p> : <>
+          <p className="mb-4 text-sm text-gray-500">已扫描 {scanResult.totalQuestions} 道；同标题 {scanResult.groupTotal} 组，相似题 {scanResult.total} 对。{scanResult.truncated ? `相似结果过多，展示相似度最高的 ${scanResult.available} 对。` : ''}</p>
           {duplicates.length === 0 && similarPairs.length === 0 ? (
             <div className="text-center py-12">
               <div className="p-3 bg-green-100 rounded-lg inline-flex mb-3">
@@ -1630,7 +1364,7 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
               {duplicates.length > 0 ? (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-600">
-                    发现 <span className="font-semibold text-amber-600">{duplicates.length}</span> 组完全重复题目，请选择要保留的题目：
+                    本页 <span className="font-semibold text-amber-600">{duplicates.length}</span> 组同标题题目，请核对内容后选择要保留的题目：
                   </p>
                   {duplicates.map((dup, index) => (
                     <div key={index} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
@@ -1640,24 +1374,27 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
                           {dup.count} 道重复
                         </span>
                       </div>
+                      <p className="mb-2 text-xs text-gray-500">本组共 {dup.count} 道，每页最多显示 20 道；仅处理当前明细页。</p>
                       <div className="space-y-2">
                         {dup.questions.map((q) => (
                           <div key={q.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg hover:bg-gray-100 transition-colors">
                             <div className="text-sm text-gray-500">
-                              创建时间：{new Date(q.created_at).toLocaleString()}
+                              创建时间：{new Date(q.created_at).toLocaleString()}<p className="mt-2 text-gray-700 whitespace-pre-wrap break-words">{q.content}</p>
                             </div>
                             <button
+                              disabled={!canDelete}
                               onClick={() => {
                                 const deleteIds = dup.questions.filter(p => p.id !== q.id).map(p => p.id);
-                                onDeleteDuplicate(q.id, deleteIds);
+                                if (window.confirm(`保留此题并删除另外 ${deleteIds.length} 道同标题题目？请先确认题干内容。本操作只删除当前明细页的题目。`)) onDeleteDuplicate(q.id, deleteIds);
                               }}
                               className="px-3 py-1.5 bg-white border border-gray-200 text-primary-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
                             >
-                              保留此题
+                              保留此题，删除本页其余
                             </button>
                           </div>
                         ))}
                       </div>
+                      {dup.count > 20 ? <div className="flex gap-4 items-center mt-3 text-xs"><button disabled={scanResult.memberPage <= 1} onClick={() => onPageChange(scanResult.page, scanResult.memberPage - 1)}>上一页同标题明细</button><span>{scanResult.memberPage}/{Math.ceil(dup.count / 20)}</span><button disabled={scanResult.memberPage * 20 >= dup.count} onClick={() => onPageChange(scanResult.page, scanResult.memberPage + 1)}>下一页同标题明细</button></div> : null}
                     </div>
                   ))}
                 </div>
@@ -1666,7 +1403,7 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
               {similarPairs.length > 0 ? (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-600">
-                    发现 <span className="font-semibold text-amber-600">{similarPairs.length}</span> 组相似题目，可手动判断是否删除其中一题：
+                    本页 <span className="font-semibold text-amber-600">{similarPairs.length}</span> 组相似题目，可手动判断是否删除其中一题：
                   </p>
                   {similarPairs.map((pair, index) => (
                     <div key={`${pair.left.id}-${pair.right.id}-${index}`} className="border border-gray-200 rounded-lg p-4">
@@ -1685,13 +1422,15 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
                             <div className="mt-3 flex justify-end">
                               <div className="flex gap-2">
                                 <button
-                                  onClick={() => onDeleteDuplicate(itemIndex === 0 ? pair.right.id : pair.left.id, [item.id])}
+                                  disabled={!canDelete}
+                                  onClick={() => { if (window.confirm("确认删除这道题目？")) onDeleteDuplicate(itemIndex === 0 ? pair.right.id : pair.left.id, [item.id]); }}
                                   className="px-3 py-1.5 bg-white border border-red-200 text-red-600 rounded-lg text-sm hover:bg-red-50 transition-colors"
                                 >
                                   删除这题
                                 </button>
                                 <button
-                                  onClick={() => onMergeDuplicate(item.id, itemIndex === 0 ? pair.right.id : pair.left.id)}
+                                  disabled={!canMerge}
+                                  onClick={() => { if (window.confirm("确认保留此题并合并标签、解析和分类，随后删除另一题？")) onMergeDuplicate(item.id, itemIndex === 0 ? pair.right.id : pair.left.id); }}
                                   className="px-3 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-lg text-sm hover:bg-blue-50 transition-colors"
                                 >
                                   保留并合并
@@ -1707,6 +1446,8 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
               ) : null}
             </div>
           )}
+          <div className="flex justify-between items-center mt-4 text-sm"><button disabled={scanResult.page <= 1} onClick={() => onPageChange(scanResult.page - 1)}>上一页结果</button><span>{scanResult.page}/{scanResult.totalPages || 1}</span><button disabled={scanResult.page >= scanResult.totalPages} onClick={() => onPageChange(scanResult.page + 1)}>下一页结果</button></div>
+          </>}
         </div>
 
         <div className="flex justify-end px-6 py-4 border-t border-gray-100 bg-gray-50/50">
@@ -2077,6 +1818,8 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
     setSaving(true);
     try {
       await questionApi.update(question.id, {
+          source: 'ai-polish',
+          expectedRevision: question.revision,
         title: draft.title,
         content: draft.content,
         answer: draft.answer,
@@ -2112,6 +1855,7 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
     <div>
       <div className="mb-2 text-sm font-medium text-gray-700">{title}</div>
       <textarea
+        aria-label={title}
         rows={rows}
         value={value}
         onChange={(e) => onChange(e.target.value)}

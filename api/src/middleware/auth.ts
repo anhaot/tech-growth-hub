@@ -1,16 +1,24 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt, { SignOptions } from 'jsonwebtoken';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config/index.js';
 import { db } from '../database/index.js';
 import { User, UserPermissions } from '../types/index.js';
+import { authCookieName, csrfCookieName, writeAuthCookies } from '../utils/authCookies.js';
+import { parseSessionLifetime } from '../utils/sessionLifetime.js';
 
 export interface AuthRequest extends Request {
   user?: User;
 }
 
-const AUTH_COOKIE_NAME = 'tgh_auth';
-const CSRF_COOKIE_NAME = 'tgh_csrf';
+type AuthPayload = { userId: string; credentialVersion?: string; exp?: number };
+
+const credentialVersion = (passwordHash: string) =>
+  createHmac('sha256', config.jwt.secret).update(passwordHash).digest('hex');
+
+export async function getSessionLifetime(): Promise<string> {
+  return (await db.getSetting('login_session_duration')) ?? config.jwt.expiresIn;
+}
 
 const permissionCompatibilityMap: Partial<Record<keyof UserPermissions, Array<keyof UserPermissions>>> = {
   question_view: ['question_view', 'question_create', 'question_edit_content', 'question_edit_meta', 'question_delete', 'question_batch_edit'],
@@ -40,7 +48,7 @@ export const getLibraryOwnerId = (user: User): string => {
 };
 
 export const hasCategoryScopeAccess = (user: User, categoryId: string | null | undefined): boolean => {
-  if (!categoryId || user.role === 'admin' || user.user_type !== 'integrated') {
+  if (user.role === 'admin' || user.user_type !== 'integrated') {
     return true;
   }
 
@@ -48,7 +56,7 @@ export const hasCategoryScopeAccess = (user: User, categoryId: string | null | u
     return true;
   }
 
-  return user.category_scopes.includes(categoryId);
+  return !!categoryId && user.category_scopes.includes(categoryId);
 };
 
 export const authMiddleware = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -58,11 +66,18 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       res.status(401).json({ error: '未提供认证令牌' });
       return;
     }
-    const decoded = jwt.verify(token, config.jwt.secret) as { userId: string };
+    const decoded = jwt.verify(token, config.jwt.secret, { algorithms: ['HS256'] }) as AuthPayload;
     
     const user = await db.getUserById(decoded.userId);
     if (!user) {
       res.status(401).json({ error: '用户不存在' });
+      return;
+    }
+
+    if (decoded.credentialVersion
+      ? decoded.credentialVersion !== credentialVersion(user.password_hash)
+      : await db.getSetting(`auth_legacy_revoked:${user.id}`) === 'true') {
+      res.status(401).json({ error: '密码已更改，请重新登录' });
       return;
     }
 
@@ -76,14 +91,18 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       });
       return;
     }
+    if (!decoded.exp && parseCookies(req.headers.cookie)[authCookieName] === token) {
+      const csrfToken = parseCookies(req.headers.cookie)[csrfCookieName] || generateCsrfToken();
+      writeAuthCookies(req, res, token, csrfToken, null);
+    }
     next();
   } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError) {
-      res.status(401).json({ error: '无效的认证令牌' });
-      return;
-    }
     if (error instanceof jwt.TokenExpiredError) {
       res.status(401).json({ error: '认证令牌已过期' });
+      return;
+    }
+    if (error instanceof jwt.JsonWebTokenError) {
+      res.status(401).json({ error: '无效的认证令牌' });
       return;
     }
     res.status(500).json({ error: '认证失败' });
@@ -107,9 +126,10 @@ export const requirePermission = (permission: keyof UserPermissions, errorMessag
     next();
   };
 
-export const generateToken = (userId: string): string => {
-  const options: SignOptions = { expiresIn: '7d' };
-  return jwt.sign({ userId }, config.jwt.secret, options);
+export const generateToken = (user: Pick<User, 'id' | 'password_hash'>, lifetime: string): string => {
+  const seconds = parseSessionLifetime(lifetime);
+  const options: SignOptions = seconds === null ? {} : { expiresIn: seconds };
+  return jwt.sign({ userId: user.id, credentialVersion: credentialVersion(user.password_hash) }, config.jwt.secret, options);
 };
 
 export function parseCookies(header: string | undefined): Record<string, string> {
@@ -145,17 +165,19 @@ export const csrfProtectionMiddleware = (req: Request, res: Response, next: Next
   }
 
   const cookies = parseCookies(req.headers.cookie);
-  const usesCookieAuth = Boolean(cookies[AUTH_COOKIE_NAME]);
-  const usesBearerAuth = req.headers.authorization?.startsWith('Bearer ');
+  const usesCookieAuth = Boolean(cookies[authCookieName]);
+  const usesBearerAuth = Boolean(req.headers.authorization?.startsWith('Bearer ') && req.headers.authorization.substring(7));
   if (!usesCookieAuth || usesBearerAuth) {
     next();
     return;
   }
 
-  const cookieToken = cookies[CSRF_COOKIE_NAME] || '';
+  const cookieToken = cookies[csrfCookieName] || '';
   const headerToken = String(req.headers['x-csrf-token'] || '');
-  const validLength = cookieToken.length > 0 && cookieToken.length === headerToken.length;
-  const valid = validLength && timingSafeEqual(Buffer.from(cookieToken), Buffer.from(headerToken));
+  const cookieBuffer = Buffer.from(cookieToken);
+  const headerBuffer = Buffer.from(headerToken);
+  const validLength = cookieBuffer.length > 0 && cookieBuffer.length === headerBuffer.length;
+  const valid = validLength && timingSafeEqual(cookieBuffer, headerBuffer);
   if (!valid) {
     res.status(403).json({ error: 'CSRF 校验失败，请刷新页面后重试' });
     return;
@@ -164,19 +186,18 @@ export const csrfProtectionMiddleware = (req: Request, res: Response, next: Next
 };
 
 function extractAuthToken(req: Request): string | null {
-  const cookies = parseCookies(req.headers.cookie);
-  const cookieToken = cookies[AUTH_COOKIE_NAME];
-  if (cookieToken) {
-    return cookieToken;
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ') && authHeader.substring(7)) {
+    return authHeader.substring(7);
   }
 
-  const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith('Bearer ')) {
-    return authHeader.substring(7);
+  const cookies = parseCookies(req.headers.cookie);
+  const cookieToken = cookies[authCookieName];
+  if (cookieToken) {
+    return cookieToken;
   }
 
   return null;
 }
 
-export const authCookieName = AUTH_COOKIE_NAME;
-export const csrfCookieName = CSRF_COOKIE_NAME;
+export { authCookieName, csrfCookieName };

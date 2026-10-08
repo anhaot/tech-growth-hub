@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { adminUser, apiLogin, primeAuth } from './utils';
 
+test.use({ serviceWorkers: 'block' });
+
 test('批量模型检查逐项更新并在结束后汇总', async ({ page, request }) => {
   const login = await apiLogin(request, adminUser.username, adminUser.password);
   const configs = [
