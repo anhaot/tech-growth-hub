@@ -1,5 +1,7 @@
 # 开发指南
 
+MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYSQL_TEST_HOST`、`MYSQL_TEST_PORT`（默认 3306）、`MYSQL_TEST_USER`、`MYSQL_TEST_PASSWORD` 和专用的 `MYSQL_TEST_DATABASE`（名称以 `tgh_test_` 开头）。测试会对该数据库做完整备份和替换，不能指向正式数据库；CI 使用临时 MariaDB 12.3.2 服务验证日期格式正文、设置值与版本时间的毫秒精度。
+
 ## 1. 目标
 
 这份文档面向继续开发这个项目的人，重点说明：

@@ -1930,12 +1930,6 @@ export class DatabaseManager {
           if (typeof value === 'boolean') {
             return value ? 1 : 0;
           }
-          if (this.dbType === 'mysql' && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-            const parsed = new Date(value);
-            if (!Number.isNaN(parsed.getTime())) {
-              return parsed.toISOString().slice(0, 19).replace('T', ' ');
-            }
-          }
           return value ?? null;
         })
       );

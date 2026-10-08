@@ -10,6 +10,7 @@
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test ./tests/security-regression.test.ts",
+    "test:mysql": "tsx --test ./tests/mysql-backup-regression.test.ts",
     "db:migrate:sqlite-to-mysql": "tsx src/scripts/migrateSqliteToMysql.ts"
   },
   "dependencies": {

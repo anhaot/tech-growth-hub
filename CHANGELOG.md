@@ -2,6 +2,9 @@
 
 ## [Unreleased] - 2026-10-08
 
+- Fixed MySQL/MariaDB backup restores altering timestamp-shaped question text and truncating version timestamps; added a real MariaDB round-trip regression to CI.
+- Added an Aliyun deployment Compose file for the existing external network and bind directories, with explicit peer addresses and deployment checks.
+
 - 增加 CSV/JSON/Markdown/AI 粘贴导入预览，分页核对、跨页排除、错误明细与确认导入；重复确认返回原结果，预览和提交均检查题库授权。
 
 - Added question version history, difference preview, rollback as a new version, optimistic revision checks, and history-preserving backups/migrations.

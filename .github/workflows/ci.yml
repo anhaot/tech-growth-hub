@@ -11,6 +11,21 @@ permissions:
 jobs:
   api:
     runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:12.3.2
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root-password
+          MARIADB_DATABASE: tgh_test_backup
+          MARIADB_USER: ci_test
+          MARIADB_PASSWORD: ci-test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mariadb --protocol=tcp -h 127.0.0.1 -uci_test -pci-test-password tgh_test_backup -e 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,6 +41,12 @@ jobs:
         working-directory: api
       - run: npm test
         working-directory: api
+      - run: npm run test:mysql
+        working-directory: api
+        env:
+          MYSQL_TEST_DATABASE: tgh_test_backup
+          MYSQL_TEST_USER: ci_test
+          MYSQL_TEST_PASSWORD: ci-test-password
       - run: npm audit --omit=dev --audit-level=high
         working-directory: api
 
@@ -72,3 +93,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: APP_VERSION=vci JWT_SECRET=ci-only-secret-with-more-than-32-characters AI_CONFIG_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 MYSQL_PASSWORD=ci-compose-password MYSQL_ROOT_PASSWORD=ci-compose-root-password docker compose config --quiet
+      - run: docker compose -f compose.aliyun.yaml config --quiet --no-env-resolution
