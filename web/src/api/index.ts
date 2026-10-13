@@ -112,6 +112,8 @@ export const categoryApi = {
 };
 
 export const questionApi = {
+  removeBookmarks: (ids: string[], mode: 'study' | 'quiz') =>
+    api.post<{ removedCount: number }>('/questions/bookmarked/remove', { ids, mode }),
   getPosition: (id: string, params?: { categoryId?: string; tags?: string[] }) => api.get<{ index: number | null }>(`/questions/position/${id}`, { params }),
   getVersions: (id: string, page = 1) => api.get<PaginatedResult<QuestionVersion>>(`/questions/${id}/versions`, { params: { page } }),
   restoreVersion: (id: string, version: number, expectedRevision: number) => api.post<Question>(`/questions/${id}/versions/${version}/restore`, { expectedRevision }),
@@ -225,6 +227,8 @@ export const importApi = {
 };
 
 export const aiApi = {
+  supplementQuestion: (data: { questionId: string; field: 'answer' | 'explanation'; answer: string; explanation: string; title?: string; content?: string; provider?: string }, signal?: AbortSignal) =>
+    api.post<{ result: string; truncated?: boolean }>('/ai/supplement', data, { timeout: 200000, signal }),
   getStatus: () => api.get<AIStatus>('/ai/status'),
   
   updateSettings: (data: { enabled?: boolean; defaultProvider?: string }) =>

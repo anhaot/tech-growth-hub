@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AIModelOption, Question } from '@/types';
 import { aiApi, importApi } from '@/api';
 import { useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
+import { getAvailableAIModels, getPreferredAIModel, resolveAIModel, savePreferredAIModel } from '@/lib/aiModels';
+import { buildChatMessage } from '@/lib/aiChat';
 import { normalizeAIResponse, renderSafeMarkdown, renderMultilineText } from '@/lib/renderMarkdown';
 import { Button, LoadingSpinner } from '@/components/ui';
 import { toast } from 'react-hot-toast';
@@ -46,9 +48,9 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
   const [activeTab, setActiveTab] = useState<'analyze' | 'expand' | 'recommend' | 'generate' | 'concise' | 'casual' | 'structured' | 'chat'>('analyze');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string>('');
-  const [provider, setProvider] = useState<string>(() => {
-    return localStorage.getItem('ai_provider') || '';
-  });
+  const [provider, setProvider] = useState(getPreferredAIModel);
+  const requestSequence = useRef(0);
+  const [importing, setImporting] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [generatedQuestions, setGeneratedQuestions] = useState<Array<any>>([]);
@@ -60,52 +62,37 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
   };
 
   useEffect(() => {
+    let active = true;
     const fetchProviders = async () => {
       try {
         const response = await aiApi.getStatus();
-        const models = response.data.availableModels?.length
-          ? response.data.availableModels
-          : response.data.availableProviders.map((name) => ({
-              id: name,
-              label: name,
-              provider: name,
-              model: '',
-              isActive: name === response.data.defaultProvider,
-            }));
+        if (!active) return;
+        const models = getAvailableAIModels(response.data);
         setAvailableModels(models);
-        setProvider((current) => {
-          const currentMatch = models.find((model) => model.id === current)
-            || models.find((model) => model.label === current)
-            || models.find((model) => model.isActive && model.provider === current)
-            || models.find((model) => model.provider === current);
-          return currentMatch?.id
-            || response.data.defaultConfigId
-            || models.find((model) => model.isActive)?.id
-            || models[0]?.id
-            || response.data.defaultProvider;
-        });
+        setProvider((current) => resolveAIModel(response.data, current));
       } catch (error) {
         console.error('Failed to fetch AI providers:', error);
-        setAvailableModels([]);
+        if (active) setAvailableModels([]);
       } finally {
-        setConfigsLoading(false);
+        if (active) setConfigsLoading(false);
       }
     };
     fetchProviders();
+    return () => { active = false; requestSequence.current++; };
   }, []);
 
   useEffect(() => {
-    if (provider) {
-      localStorage.setItem('ai_provider', provider);
-    }
+    savePreferredAIModel(provider);
   }, [provider]);
 
   const handleAction = async () => {
+    if (loading || importing) return;
     if (!provider) {
       toast.error('请先选择AI模型');
       return;
     }
 
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setResult('');
     setGeneratedQuestions([]);
@@ -115,18 +102,22 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
       switch (activeTab) {
         case 'analyze':
           response = await aiApi.analyze(question.id, provider);
+          if (sequence !== requestSequence.current) return;
           applyAIResult(response.data.result);
           break;
         case 'expand':
           response = await aiApi.expand(question.id, provider);
+          if (sequence !== requestSequence.current) return;
           applyAIResult(response.data.result);
           break;
         case 'recommend':
           response = await aiApi.recommend(question.id, provider);
+          if (sequence !== requestSequence.current) return;
           applyAIResult(response.data.result);
           break;
         case 'generate':
           response = await aiApi.generate(question.id, 3, provider);
+          if (sequence !== requestSequence.current) return;
           {
             const resultText = normalizeAIResponse(response.data.result);
             setResult(resultText);
@@ -145,18 +136,22 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
           break;
         case 'concise':
           response = await aiApi.chat(question.id, '请用精简版回答这道题目，要求：回答文字在100-300字左右，简洁明了。', provider);
+          if (sequence !== requestSequence.current) return;
           applyAIResult(response.data.result);
           break;
         case 'casual':
           response = await aiApi.chat(question.id, '请用口语化方式回答这道题目，要求：自然流畅，像在说话，通俗易懂。', provider);
+          if (sequence !== requestSequence.current) return;
           applyAIResult(response.data.result);
           break;
         case 'structured':
           response = await aiApi.chat(question.id, '请用结构化方式回答这道题目，要求：分条阐述，条理分明，逻辑清晰。', provider);
+          if (sequence !== requestSequence.current) return;
           applyAIResult(response.data.result);
           break;
       }
     } catch (error: any) {
+      if (sequence !== requestSequence.current) return;
       console.error('AI action failed:', error);
       const errorMsg = error.response?.data?.error || error.message || 'AI请求失败';
       const shortError = errorMsg.includes('API error') 
@@ -164,22 +159,29 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
         : (errorMsg.length > 50 ? errorMsg.substring(0, 50) + '...' : errorMsg);
       toast.error(shortError);
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
   const handleChat = async () => {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || loading || !provider) return;
 
-    const userMessage = chatInput;
+    const userMessage = chatInput.trim();
+    if (userMessage.length > 12000) { toast.error('问题不能超过 12000 字'); return; }
+    const sequence = ++requestSequence.current;
+    const previousMessages = chatMessages;
     setChatInput('');
     setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
     try {
-      const response = await aiApi.chat(question.id, userMessage, provider);
+      const response = await aiApi.chat(question.id, buildChatMessage(previousMessages, userMessage), provider);
+      if (sequence !== requestSequence.current) return;
       setChatMessages(prev => [...prev, { role: 'assistant', content: normalizeAIResponse(response.data.result) }]);
     } catch (error: any) {
+      if (sequence !== requestSequence.current) return;
+      setChatMessages(previousMessages);
+      setChatInput(userMessage);
       console.error('AI chat failed:', error);
       const errorMsg = error.response?.data?.error || 'AI请求失败';
       const shortError = errorMsg.includes('API error') 
@@ -187,16 +189,18 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
         : (errorMsg.length > 50 ? errorMsg.substring(0, 50) + '...' : errorMsg);
       toast.error(shortError);
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
   const importGeneratedQuestions = async () => {
+    if (importing || loading) return;
     if (generatedQuestions.length === 0) {
       toast.error('没有可导入的题目');
       return;
     }
 
+    setImporting(true);
     try {
       const response = await importApi.importText(
         generatedQuestions.map(q => ({
@@ -212,6 +216,8 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
       setGeneratedQuestions([]);
     } catch (error: any) {
       toast.error(error.response?.data?.error || '导入失败');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -232,6 +238,7 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
             return (
               <button
                 key={tab.id}
+                disabled={loading || importing}
                 onClick={() => {
                   setActiveTab(tab.id);
                   setResult('');
@@ -253,6 +260,7 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
           <Cpu size={12} className="text-gray-400" />
           <select
             value={provider}
+            disabled={loading || importing}
             onChange={(e) => setProvider(e.target.value)}
             className="select-field px-2 pr-8 py-1 bg-white text-gray-700 text-xs cursor-pointer"
           >
@@ -306,7 +314,7 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
             <div className="p-2 bg-green-50 rounded-xl border border-green-200">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-green-700 font-medium text-xs">已生成 {generatedQuestions.length} 道相似题目</p>
-                <Button size="sm" onClick={importGeneratedQuestions}>
+                <Button size="sm" onClick={importGeneratedQuestions} loading={importing}>
                   <Download size={14} className="mr-1" />
                   导入
                 </Button>
@@ -348,6 +356,8 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ question }) => {
               className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 focus:bg-white transition-all"
               placeholder="输入您的问题..."
               value={chatInput}
+              maxLength={12000}
+              disabled={loading}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleChat()}
             />

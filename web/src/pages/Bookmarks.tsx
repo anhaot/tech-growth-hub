@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { questionApi } from '@/api';
 import { getTagColorClasses } from '@/lib/tagColors';
@@ -24,8 +24,12 @@ const bookmarksCache = new Map<string, Question[]>();
 export const BookmarksPage: React.FC = () => {
   const { user } = useAuthStore();
   const [searchParams, setSearchParams] = useSearchParams();
-  const mode = (searchParams.get('mode') as 'study' | 'quiz') || 'study';
-  const initialCacheKey = `${user?.id || ''}|${mode}`;
+  const mode = searchParams.get('mode') === 'quiz' ? 'quiz' : 'study';
+  const cacheScope = JSON.stringify([user?.id, user?.role, user?.user_type, user?.library_owner_id, user?.category_scopes, user?.permissions]);
+  const initialCacheKey = `${cacheScope}|${mode}`;
+  const currentCacheKey = useRef(initialCacheKey);
+  currentCacheKey.current = initialCacheKey;
+  const requestSequence = useRef(0);
   const initialBookmarks = bookmarksCache.get(initialCacheKey);
   const [questions, setQuestions] = useState<Question[]>(initialBookmarks || []);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -33,9 +37,12 @@ export const BookmarksPage: React.FC = () => {
   const [loading, setLoading] = useState(!initialBookmarks);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [removing, setRemoving] = useState(false);
 
   const fetchBookmarks = async () => {
-    const cacheKey = `${user?.id || ''}|${mode}`;
+    const sequence = ++requestSequence.current;
+    const cacheKey = initialCacheKey;
     const cached = bookmarksCache.get(cacheKey);
     if (cached) {
       setQuestions(cached);
@@ -46,31 +53,40 @@ export const BookmarksPage: React.FC = () => {
     }
     try {
       const response = await questionApi.getBookmarked(mode);
+      if (sequence !== requestSequence.current) return;
+      if (bookmarksCache.size >= 20) bookmarksCache.delete(bookmarksCache.keys().next().value!);
       bookmarksCache.set(cacheKey, response.data);
       setQuestions(response.data);
+      setSelectedIds((current) => new Set(response.data.filter((q: Question) => current.has(q.id)).map((q: Question) => q.id)));
     } catch (error) {
       console.error('Failed to fetch bookmarks:', error);
+      if (sequence === requestSequence.current) toast.error('获取收藏失败，请稍后重试');
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
   useEffect(() => {
+    setSelectedIds(new Set());
     fetchBookmarks();
-  }, [mode, user?.id]);
+    return () => { requestSequence.current++; };
+  }, [mode, cacheScope]);
 
   const handleRemoveBookmark = async (questionId: string) => {
+    if (removing) return;
     if (!confirm('确定要取消收藏吗？')) return;
 
+    const cacheKey = initialCacheKey;
+    setRemoving(true);
     try {
-      await questionApi.saveProgress(questionId, {
-        mode,
-        isBookmarked: false,
-      });
+      await questionApi.removeBookmarks([questionId], mode);
+      bookmarksCache.delete(cacheKey);
       toast.success('已取消收藏');
-      fetchBookmarks();
     } catch (error) {
       toast.error('操作失败');
+    } finally {
+      if (cacheKey === currentCacheKey.current) await fetchBookmarks();
+      setRemoving(false);
     }
   };
 
@@ -116,6 +132,26 @@ export const BookmarksPage: React.FC = () => {
         return selectedTags.every((tag) => tags.includes(tag));
       });
 
+  const removeSelected = async () => {
+    if (!selectedIds.size || removing || !confirm(`取消选中的 ${selectedIds.size} 道题的收藏？题目仍保留在题库中。`)) return;
+    setRemoving(true);
+    const cacheKey = initialCacheKey;
+    try {
+      const ids = [...selectedIds];
+      for (let offset = 0; offset < ids.length; offset += 500) {
+        await questionApi.removeBookmarks(ids.slice(offset, offset + 500), mode);
+        bookmarksCache.delete(cacheKey);
+      }
+      if (cacheKey === currentCacheKey.current) setSelectedIds(new Set());
+      toast.success('已批量取消收藏');
+    } catch (error) {
+      toast.error('批量取消未全部完成，请刷新后重试');
+    } finally {
+      if (cacheKey === currentCacheKey.current) await fetchBookmarks();
+      setRemoving(false);
+    }
+  };
+
   const availableTags = Array.from(
     questions.reduce((map, question) => {
       for (const tag of parseQuestionTags(question.tags)) {
@@ -160,6 +196,7 @@ export const BookmarksPage: React.FC = () => {
         <div className="flex flex-col gap-2.5 xl:flex-row xl:items-center">
           <div className="flex rounded-xl bg-slate-100 p-1 xl:flex-none xl:gap-2 xl:bg-transparent xl:p-0">
             <button
+              disabled={removing}
               onClick={() => setSearchParams({ mode: 'study' })}
               className={`inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all lg:gap-2 lg:px-5 lg:py-3 lg:text-sm ${
                 mode === 'study'
@@ -171,6 +208,7 @@ export const BookmarksPage: React.FC = () => {
               背题收藏
             </button>
             <button
+              disabled={removing}
               onClick={() => setSearchParams({ mode: 'quiz' })}
               className={`inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all lg:gap-2 lg:px-5 lg:py-3 lg:text-sm ${
                 mode === 'quiz'
@@ -249,6 +287,15 @@ export const BookmarksPage: React.FC = () => {
         ) : null}
       </div>
 
+      {questions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-3">
+          <button disabled={removing} onClick={() => setSelectedIds(new Set(filteredQuestions.map((q) => q.id)))} className="text-sm text-primary-600">全选当前列表</button>
+          <button disabled={removing} onClick={() => setSelectedIds(new Set())} className="text-sm text-gray-500">取消全选</button>
+          <span className="text-sm text-gray-500">已选 {selectedIds.size} 道</span>
+          <button disabled={removing || !selectedIds.size} onClick={removeSelected} className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 disabled:opacity-40">{removing ? '正在取消…' : '批量取消收藏'}</button>
+        </div>
+      )}
+
       {loading && questions.length === 0 ? (
         <div className="animate-pulse space-y-3" aria-label="收藏题目加载中">
           {[0, 1, 2].map((item) => (
@@ -285,11 +332,17 @@ export const BookmarksPage: React.FC = () => {
               >
                 <div className="flex items-start justify-between px-3.5 pb-0 pt-3.5 lg:px-5 lg:pt-4">
                   <div className="flex flex-wrap items-center gap-2">
+                    <input type="checkbox" aria-label={`选择收藏：${question.title}`} checked={selectedIds.has(question.id)} disabled={removing} onChange={() => setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(question.id)) next.delete(question.id); else next.add(question.id);
+                      return next;
+                    })} className="h-5 w-5" />
                     <span className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-medium border ${diffConfig.bg} ${diffConfig.text} ${diffConfig.border}`}>
                       {diffConfig.label}
                     </span>
                   </div>
                   <button
+                    disabled={removing}
                     onClick={() => handleRemoveBookmark(question.id)}
                     className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                     title="取消收藏"

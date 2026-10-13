@@ -1,6 +1,9 @@
-import { config } from '../config/index.js';
-import { db } from '../database/index.js';
-import { assertAIBaseUrlResolvesPublic, validateAIBaseUrl } from '../utils/aiConfigSecurity.js';
+import { config } from "../config/index.js";
+import { db } from "../database/index.js";
+import {
+  assertAIBaseUrlResolvesPublic,
+  validateAIBaseUrl,
+} from "../utils/aiConfigSecurity.js";
 
 interface ProviderActor {
   userId?: string;
@@ -9,7 +12,21 @@ interface ProviderActor {
 
 export interface AIProvider {
   name: string;
-  chat(messages: Array<{ role: string; content: string }>, options?: ChatOptions): Promise<string>;
+  chat(
+    messages: Array<{ role: string; content: string }>,
+    options?: ChatOptions,
+  ): Promise<string>;
+  chatResult?(
+    messages: Array<{ role: string; content: string }>,
+    options?: ChatOptions,
+  ): Promise<AICompletion>;
+}
+
+export interface AICompletion {
+  content: string;
+  truncated: boolean;
+  finishReason?: string;
+  continuationCount: number;
 }
 
 interface ChatOptions {
@@ -20,40 +37,58 @@ interface ChatOptions {
 interface ChatCompletionResponse {
   choices: Array<{
     message: {
-      content: string;
+      content: string | Array<{ type?: string; text?: string }> | null;
+      reasoning_content?: string;
     };
+    finish_reason?: string;
   }>;
 }
 
 const defaultBaseUrls: Record<string, string> = {
-  openai: 'https://api.openai.com/v1',
-  deepseek: 'https://api.deepseek.com/v1',
-  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  doubao: 'https://ark.cn-beijing.volces.com/api/v3',
-  wenxin: 'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat',
-  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  doubao: "https://ark.cn-beijing.volces.com/api/v3",
+  wenxin: "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
 };
 
 const AI_REQUEST_TIMEOUT_MS = 180000;
 
-function getProviderErrorMessage(providerName: string, status: number, responseBody: string): string {
+function getProviderErrorMessage(
+  providerName: string,
+  status: number,
+  responseBody: string,
+): string {
+  if (status === 410)
+    return `${providerName} 的推理接口已不可用（HTTP 410），请更换模型或检查服务商配置`;
   let detail = responseBody;
   try {
-    const parsed = JSON.parse(responseBody) as { detail?: string; error?: { message?: string } | string; message?: string };
-    detail = parsed.detail
-      || (typeof parsed.error === 'string' ? parsed.error : parsed.error?.message)
-      || parsed.message
-      || responseBody;
+    const parsed = JSON.parse(responseBody) as {
+      detail?: string;
+      error?: { message?: string } | string;
+      message?: string;
+    };
+    detail =
+      parsed.detail ||
+      (typeof parsed.error === "string"
+        ? parsed.error
+        : parsed.error?.message) ||
+      parsed.message ||
+      responseBody;
   } catch {
     // Keep the plain-text response returned by the provider.
   }
 
-  if (status === 404 && /Function ['"]?[^'"]+['"]?:? Not found for account/i.test(detail)) {
+  if (
+    status === 404 &&
+    /Function ['"]?[^'"]+['"]?:? Not found for account/i.test(detail)
+  ) {
     return `${providerName} 当前账户无权调用该模型。NVIDIA 模型列表可见不代表可调用，请确认账户已开通 Public API Endpoints；若已开通，则该模型的托管端点可能暂不可用，请更换模型或联系 NVIDIA 支持。`;
   }
 
-  const normalizedDetail = detail.replace(/\s+/g, ' ').trim().slice(0, 500);
-  return `${providerName} API 请求失败（HTTP ${status}）${normalizedDetail ? `：${normalizedDetail}` : ''}`;
+  const normalizedDetail = detail.replace(/\s+/g, " ").trim().slice(0, 500);
+  return `${providerName} API 请求失败（HTTP ${status}）${normalizedDetail ? `：${normalizedDetail}` : ""}`;
 }
 
 class OpenAICompatibleProvider implements AIProvider {
@@ -63,56 +98,182 @@ class OpenAICompatibleProvider implements AIProvider {
   private baseUrl: string;
   private timeout: number;
 
-  constructor(name: string, apiKey: string, model: string, baseUrl?: string, timeout: number = AI_REQUEST_TIMEOUT_MS) {
+  constructor(
+    name: string,
+    apiKey: string,
+    model: string,
+    baseUrl?: string,
+    timeout: number = AI_REQUEST_TIMEOUT_MS,
+  ) {
     this.name = name;
     this.apiKey = apiKey;
     this.model = model;
-    this.baseUrl = baseUrl || defaultBaseUrls[name] || 'https://api.openai.com/v1';
+    this.baseUrl =
+      baseUrl || defaultBaseUrls[name] || "https://api.openai.com/v1";
     this.timeout = timeout;
   }
 
-  async chat(messages: Array<{ role: string; content: string }>, options: ChatOptions = {}): Promise<string> {
+  async chat(
+    messages: Array<{ role: string; content: string }>,
+    options: ChatOptions = {},
+  ): Promise<string> {
+    return (await this.chatResult(messages, options)).content;
+  }
+
+  async chatResult(
+    messages: Array<{ role: string; content: string }>,
+    options: ChatOptions = {},
+  ): Promise<AICompletion> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      validateAIBaseUrl(this.baseUrl, { role: 'admin' }, true, 'runtime');
+      validateAIBaseUrl(this.baseUrl, { role: "admin" }, true, "runtime");
       await assertAIBaseUrlResolvesPublic(this.baseUrl);
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? 4000,
-        }),
-        signal: controller.signal,
-        redirect: 'error',
-      });
+      let content = "";
+      let finishReason: string | undefined;
+      const conversation = [...messages];
+      let maxTokens = options.maxTokens ?? 8192;
+      const attempts = options.maxTokens === undefined ? 3 : 1;
+      let disableThinking = false;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+          const response = await fetch(`${this.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: this.model,
+              messages: conversation,
+              temperature: options.temperature ?? 0.7,
+              max_tokens: maxTokens,
+              ...(disableThinking
+                ? { chat_template_kwargs: { thinking_mode: "disabled" } }
+                : {}),
+            }),
+            signal: controller.signal,
+            redirect: "error",
+          });
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(getProviderErrorMessage(this.name, response.status, error));
+          if (!response.ok) {
+            const error = await response.text();
+            throw new Error(
+              getProviderErrorMessage(this.name, response.status, error),
+            );
+          }
+          const data = (await response.json()) as ChatCompletionResponse;
+          const choice = data.choices?.[0];
+          if (!choice?.message)
+            throw new Error(`${this.name} 返回的回答格式无效，请重试`);
+          const rawContent = choice.message.content;
+          const part =
+            typeof rawContent === "string"
+              ? rawContent
+              : Array.isArray(rawContent)
+                ? rawContent
+                    .map((block) =>
+                      block.type === "text" && typeof block.text === "string"
+                        ? block.text
+                        : "",
+                    )
+                    .join("")
+                : "";
+          finishReason = choice?.finish_reason;
+          if (typeof part === "string") content += part;
+          const reasoningOnly =
+            !content.trim() &&
+            Boolean(choice.message.reasoning_content?.trim());
+          if (!content.trim())
+            console.warn("[ai] empty_completion", {
+              model: this.model,
+              finishReason,
+              maxTokens,
+              attempt: attempt + 1,
+              reasoningOnly,
+            });
+          if (
+            reasoningOnly &&
+            finishReason !== "length" &&
+            attempt + 1 < attempts
+          ) {
+            if (
+              new URL(this.baseUrl).hostname === "integrate.api.nvidia.com" &&
+              this.model === "minimaxai/minimax-m3"
+            )
+              disableThinking = true;
+            else maxTokens = Math.min(maxTokens * 2, 16384);
+            continue;
+          }
+          if (!content.trim() && finishReason !== "length")
+            throw new Error(`${this.name} 没有返回有效回答，请检查模型配置`);
+          if (finishReason !== "length")
+            return {
+              content,
+              truncated: false,
+              finishReason,
+              continuationCount: attempt,
+            };
+          if (attempt + 1 >= attempts) {
+            if (!content.trim())
+              throw new Error(
+                `${this.name} 未生成回答，输出预算已被推理过程耗尽，请更换模型重试`,
+              );
+            return {
+              content,
+              truncated: true,
+              finishReason,
+              continuationCount: attempt,
+            };
+          }
+          if (part?.trim()) {
+            conversation.push(
+              { role: "assistant", content: part },
+              {
+                role: "user",
+                content:
+                  "上一条回复因输出上限中断。请从断点继续补全，直接接着未完成的内容输出，不要重复已有内容、不要重新开头，保留原来的 Markdown、编号和代码格式。",
+              },
+            );
+          } else {
+            if (
+              new URL(this.baseUrl).hostname === "integrate.api.nvidia.com" &&
+              this.model === "minimaxai/minimax-m3"
+            )
+              disableThinking = true;
+            else maxTokens = Math.min(maxTokens * 2, 16384);
+          }
+        } catch (error) {
+          // Keep generated text if a later continuation fails or times out.
+          if (content.trim())
+            return {
+              content,
+              truncated: true,
+              finishReason: "length",
+              continuationCount: attempt,
+            };
+          throw error;
+        }
       }
-      const data = await response.json() as ChatCompletionResponse;
-      return data.choices[0].message.content;
+      throw new Error(
+        `${this.name} 未生成回答，模型输出预算可能已被推理过程耗尽，请更换模型重试`,
+      );
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        throw new Error(`${this.name} 推理接口在 ${Math.round(this.timeout / 1000)} 秒内未响应。若模型列表可以正常读取，通常是上游账户权限、地区访问限制或托管推理服务异常，请更换网络/提供商或联系上游支持`);
+      if (error.name === "AbortError") {
+        throw new Error(
+          `${this.name} 推理接口在 ${Math.round(this.timeout / 1000)} 秒内未响应。若模型列表可以正常读取，通常是上游账户权限、地区访问限制或托管推理服务异常，请更换网络/提供商或联系上游支持`,
+        );
       }
-      
-      if (error.message?.includes('ECONNREFUSED')) {
+
+      if (error.message?.includes("ECONNREFUSED")) {
         throw new Error(`${this.name} 连接被拒绝，请检查API地址和端口`);
       }
-      
-      if (error.message?.includes('ENOTFOUND')) {
+
+      if (error.message?.includes("ENOTFOUND")) {
         throw new Error(`${this.name} 无法解析API地址，请检查base_url是否正确`);
       }
-      
+
       throw error;
     } finally {
       clearTimeout(timeoutId);
@@ -131,13 +292,37 @@ class AIService {
 
   private initializeProviders() {
     if (config.ai.openai.apiKey) {
-      this.providers.set('openai', new OpenAICompatibleProvider('openai', config.ai.openai.apiKey, config.ai.openai.model, config.ai.openai.baseUrl));
+      this.providers.set(
+        "openai",
+        new OpenAICompatibleProvider(
+          "openai",
+          config.ai.openai.apiKey,
+          config.ai.openai.model,
+          config.ai.openai.baseUrl,
+        ),
+      );
     }
     if (config.ai.deepseek.apiKey) {
-      this.providers.set('deepseek', new OpenAICompatibleProvider('deepseek', config.ai.deepseek.apiKey, config.ai.deepseek.model, config.ai.deepseek.baseUrl));
+      this.providers.set(
+        "deepseek",
+        new OpenAICompatibleProvider(
+          "deepseek",
+          config.ai.deepseek.apiKey,
+          config.ai.deepseek.model,
+          config.ai.deepseek.baseUrl,
+        ),
+      );
     }
     if (config.ai.qwen.apiKey) {
-      this.providers.set('qwen', new OpenAICompatibleProvider('qwen', config.ai.qwen.apiKey, config.ai.qwen.model, config.ai.qwen.baseUrl));
+      this.providers.set(
+        "qwen",
+        new OpenAICompatibleProvider(
+          "qwen",
+          config.ai.qwen.apiKey,
+          config.ai.qwen.model,
+          config.ai.qwen.baseUrl,
+        ),
+      );
     }
   }
 
@@ -145,48 +330,56 @@ class AIService {
     return Array.from(this.providers.keys());
   }
 
-  async getProvider(providerName: string, actor?: ProviderActor): Promise<AIProvider> {
+  async getProvider(
+    providerName: string,
+    actor?: ProviderActor,
+  ): Promise<AIProvider> {
     const defaultBaseUrls: Record<string, string> = {
-      openai: 'https://api.openai.com/v1',
-      deepseek: 'https://api.deepseek.com/v1',
-      qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      doubao: 'https://ark.cn-beijing.volces.com/api/v3',
-      wenxin: 'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat',
-      zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+      openai: "https://api.openai.com/v1",
+      deepseek: "https://api.deepseek.com/v1",
+      qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      doubao: "https://ark.cn-beijing.volces.com/api/v3",
+      wenxin:
+        "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat",
+      zhipu: "https://open.bigmodel.cn/api/paas/v4",
     };
 
     const userId = actor?.userId;
-    const actorRole = actor?.role || 'user';
+    const actorRole = actor?.role || "user";
 
     if (userId && providerName) {
       const allConfigs = await db.getAIConfigsByUserId(userId);
       const normalizedProviderName = providerName.toLowerCase();
-      const matchingConfigs = allConfigs.filter(c =>
-        c.id === providerName
-        || c.display_name === providerName
-        || c.provider === providerName
-        || c.display_name?.toLowerCase() === normalizedProviderName
-        || c.provider.toLowerCase() === normalizedProviderName
+      const matchingConfigs = allConfigs.filter(
+        (c) =>
+          c.id === providerName ||
+          c.display_name === providerName ||
+          c.provider === providerName ||
+          c.display_name?.toLowerCase() === normalizedProviderName ||
+          c.provider.toLowerCase() === normalizedProviderName,
       );
       // Configuration IDs are the only unambiguous selector. For legacy clients that
       // still send a provider/display name, prefer the active config instead of the
       // first row returned by the database.
-      const targetConfig = matchingConfigs.find(c => c.id === providerName)
-        || matchingConfigs.find(c => c.is_active)
-        || matchingConfigs[0];
+      const targetConfig =
+        matchingConfigs.find((c) => c.id === providerName) ||
+        matchingConfigs.find((c) => c.is_active) ||
+        matchingConfigs[0];
       if (targetConfig) {
         const baseUrl = validateAIBaseUrl(
-          targetConfig.base_url || defaultBaseUrls[targetConfig.provider] || 'https://api.openai.com/v1',
+          targetConfig.base_url ||
+            defaultBaseUrls[targetConfig.provider] ||
+            "https://api.openai.com/v1",
           { role: actorRole },
           Boolean(targetConfig.is_custom),
-          'runtime'
+          "runtime",
         );
         return new OpenAICompatibleProvider(
           targetConfig.display_name || targetConfig.provider,
           targetConfig.api_key,
           targetConfig.model,
           baseUrl,
-          AI_REQUEST_TIMEOUT_MS
+          AI_REQUEST_TIMEOUT_MS,
         );
       }
     }
@@ -195,17 +388,19 @@ class AIService {
       const userConfig = await db.getActiveAIConfig(userId);
       if (userConfig) {
         const baseUrl = validateAIBaseUrl(
-          userConfig.base_url || defaultBaseUrls[userConfig.provider] || 'https://api.openai.com/v1',
+          userConfig.base_url ||
+            defaultBaseUrls[userConfig.provider] ||
+            "https://api.openai.com/v1",
           { role: actorRole },
           Boolean(userConfig.is_custom),
-          'runtime'
+          "runtime",
         );
         return new OpenAICompatibleProvider(
           userConfig.display_name || userConfig.provider,
           userConfig.api_key,
           userConfig.model,
           baseUrl,
-          AI_REQUEST_TIMEOUT_MS
+          AI_REQUEST_TIMEOUT_MS,
         );
       }
     }
@@ -214,18 +409,32 @@ class AIService {
     if (provider) {
       return provider;
     }
-    
-    throw new Error(`AI provider '${providerName}' is not configured. Please add an AI configuration in Settings.`);
+
+    throw new Error(
+      `AI provider '${providerName}' is not configured. Please add an AI configuration in Settings.`,
+    );
   }
 
-  async chat(messages: Array<{ role: string; content: string }>, providerName?: string, actor?: ProviderActor): Promise<string> {
-    const provider = await this.getProvider(providerName || config.ai.defaultProvider, actor);
+  async chat(
+    messages: Array<{ role: string; content: string }>,
+    providerName?: string,
+    actor?: ProviderActor,
+  ): Promise<string> {
+    const provider = await this.getProvider(
+      providerName || config.ai.defaultProvider,
+      actor,
+    );
     return provider.chat(messages);
   }
 
-  async analyzeQuestion(question: { title: string; content: string; answer: string }, providerName?: string): Promise<string> {
-    const provider = await this.getProvider(providerName || config.ai.defaultProvider);
-    
+  async analyzeQuestion(
+    question: { title: string; content: string; answer: string },
+    providerName?: string,
+  ): Promise<string> {
+    const provider = await this.getProvider(
+      providerName || config.ai.defaultProvider,
+    );
+
     const prompt = `请分析以下题目，提供详细的解题思路和知识点：
 
 题目：${question.title}
@@ -238,12 +447,17 @@ class AIService {
 3. 相关知识点
 4. 易错点提示`;
 
-    return provider.chat([{ role: 'user', content: prompt }]);
+    return provider.chat([{ role: "user", content: prompt }]);
   }
 
-  async expandAnswer(question: { title: string; content: string; answer: string }, providerName?: string): Promise<string> {
-    const provider = await this.getProvider(providerName || config.ai.defaultProvider);
-    
+  async expandAnswer(
+    question: { title: string; content: string; answer: string },
+    providerName?: string,
+  ): Promise<string> {
+    const provider = await this.getProvider(
+      providerName || config.ai.defaultProvider,
+    );
+
     const prompt = `请扩展以下题目的答案，提供更详细的解释：
 
 题目：${question.title}
@@ -255,12 +469,17 @@ class AIService {
 2. 相关概念解释
 3. 实际应用场景`;
 
-    return provider.chat([{ role: 'user', content: prompt }]);
+    return provider.chat([{ role: "user", content: prompt }]);
   }
 
-  async recommendKnowledge(question: { title: string; content: string; answer: string }, providerName?: string): Promise<string> {
-    const provider = await this.getProvider(providerName || config.ai.defaultProvider);
-    
+  async recommendKnowledge(
+    question: { title: string; content: string; answer: string },
+    providerName?: string,
+  ): Promise<string> {
+    const provider = await this.getProvider(
+      providerName || config.ai.defaultProvider,
+    );
+
     const prompt = `基于以下题目，推荐相关的学习知识点：
 
 题目：${question.title}
@@ -272,12 +491,18 @@ class AIService {
 2. 学习资源建议
 3. 练习建议`;
 
-    return provider.chat([{ role: 'user', content: prompt }]);
+    return provider.chat([{ role: "user", content: prompt }]);
   }
 
-  async generateSimilarQuestions(question: { title: string; content: string; answer: string }, count: number = 3, providerName?: string): Promise<string> {
-    const provider = await this.getProvider(providerName || config.ai.defaultProvider);
-    
+  async generateSimilarQuestions(
+    question: { title: string; content: string; answer: string },
+    count: number = 3,
+    providerName?: string,
+  ): Promise<string> {
+    const provider = await this.getProvider(
+      providerName || config.ai.defaultProvider,
+    );
+
     const prompt = `请基于以下题目生成${count}道类似的练习题：
 
 题目：${question.title}
@@ -289,12 +514,18 @@ class AIService {
 2. 参考答案
 3. 解析`;
 
-    return provider.chat([{ role: 'user', content: prompt }]);
+    return provider.chat([{ role: "user", content: prompt }]);
   }
 
-  async explainConcept(concept: string, context?: string, providerName?: string): Promise<string> {
-    const provider = await this.getProvider(providerName || config.ai.defaultProvider);
-    
+  async explainConcept(
+    concept: string,
+    context?: string,
+    providerName?: string,
+  ): Promise<string> {
+    const provider = await this.getProvider(
+      providerName || config.ai.defaultProvider,
+    );
+
     const prompt = context
       ? `请解释以下概念：${concept}
 
@@ -305,7 +536,7 @@ class AIService {
 
 请提供详细的解释，包括定义、特点、应用场景等。`;
 
-    return provider.chat([{ role: 'user', content: prompt }]);
+    return provider.chat([{ role: "user", content: prompt }]);
   }
 }
 

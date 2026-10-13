@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { questionApi, categoryApi } from '@/api';
+import { questionApi, categoryApi, aiApi } from '@/api';
 import { Question, Category, LearningProgress } from '@/types';
 import { useAIStore, useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
@@ -24,6 +24,7 @@ import {
   MapPin,
   Tags,
   MoreHorizontal,
+  Trash2,
 } from 'lucide-react';
 import AIAssistant from '@/components/AIAssistant';
 import QuestionHistoryModal from '@/components/QuestionHistoryModal';
@@ -38,6 +39,8 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const canEditQuestionContent = hasPermission(user, 'question_edit_content');
   const canEditQuestionMeta = hasPermission(user, 'question_edit_meta');
   const canManageQuestions = canEditQuestionContent || canEditQuestionMeta;
+  const canDeleteQuestion = hasPermission(user, 'question_delete');
+  const [deleting, setDeleting] = useState(false);
   const canUseAI = hasPermission(user, 'ai_use');
   const [totalQuestions, setTotalQuestions] = useState(0);
   const [pageStart, setPageStart] = useState(0);
@@ -66,6 +69,9 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const resetScrollAfterNavigationRef = useRef(false);
   const [initialized, setInitialized] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [supplementField, setSupplementField] = useState<'answer' | 'explanation' | null>(null);
+  const [supplementPreview, setSupplementPreview] = useState<{ field: 'answer' | 'explanation'; content: string; truncated: boolean } | null>(null);
+  const supplementPending = useRef<AbortController | null>(null);
   const [editForm, setEditForm] = useState({
     title: '',
     content: '',
@@ -176,7 +182,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   };
 
   const saveEdit = async () => {
-    if (!currentQuestion) return;
+    if (!currentQuestion || supplementField) return;
 
     try {
       const response = await questionApi.update(currentQuestion.id, {
@@ -236,6 +242,83 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   useEffect(() => { setJumpPosition(String(currentIndex + 1)); }, [currentIndex]);
 
   const currentQuestion = questions[currentIndex - pageStart];
+  useEffect(() => {
+    setSupplementField(null);
+    setSupplementPreview(null);
+    return () => { supplementPending.current?.abort(); supplementPending.current = null; };
+  }, [isEditing, currentQuestion?.id]);
+  const supplement = async (field: 'answer' | 'explanation') => {
+    if (!currentQuestion || supplementField) return;
+    const controller = new AbortController();
+    supplementPending.current = controller;
+    setSupplementField(field);
+    setSupplementPreview(null);
+    try {
+      const response = await aiApi.supplementQuestion({ questionId: currentQuestion.id, field, answer: editForm.answer, explanation: editForm.explanation, title: editForm.title, content: editForm.content }, controller.signal);
+      if (supplementPending.current !== controller) return;
+      if (!response.data.result?.trim()) throw new Error('AI没有返回有效的补充内容，请重试');
+      setSupplementPreview({ field, content: response.data.result, truncated: Boolean(response.data.truncated) });
+    } catch (error: any) {
+      if (supplementPending.current === controller) toast.error(error.response?.data?.error || error.message || 'AI补充失败');
+    } finally {
+      if (supplementPending.current === controller) { supplementPending.current = null; setSupplementField(null); }
+    }
+  };
+  const supplementButton = (field: 'answer' | 'explanation') => aiEnabled && canEditQuestionContent && hasPermission(user, 'ai_polish') ? (
+    <button type="button" aria-label={`AI补充${field === 'answer' ? '参考答案' : '思路解析'}`} title="AI补充" disabled={Boolean(supplementField)} onClick={() => void supplement(field)} className="inline-flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-lg text-xs text-violet-600 hover:bg-violet-50 disabled:opacity-50">
+      <Sparkles size={17} className={supplementField === field ? 'animate-pulse' : ''} />{supplementField === field ? '生成中' : 'AI'}
+    </button>
+  ) : null;
+  const previewFor = (field: 'answer' | 'explanation') => supplementPreview?.field === field ? (
+    <div className="mt-3 space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-4" data-testid={`supplement-preview-${field}`}>
+      <p className="text-sm font-semibold text-violet-700">{field === 'answer' ? '参考答案' : '思路解析'} · AI补充预览</p>
+      <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(supplementPreview.content, 'rich') }} />
+      {supplementPreview.truncated && <p className="text-sm text-amber-700">补充结果尚未完整生成，请重新生成后采用。</p>}
+      <div className="flex flex-wrap gap-3">
+        <button type="button" disabled={supplementPreview.truncated} onClick={() => { setEditForm((form) => ({ ...form, [field]: supplementPreview.content })); setSupplementPreview(null); }} className="btn-primary disabled:opacity-40">采用补充结果</button>
+        <button type="button" onClick={() => void supplement(field)} className="text-sm text-violet-600">重新生成补充</button>
+        <button type="button" onClick={() => setSupplementPreview(null)} className="text-sm text-gray-600">放弃补充</button>
+      </div>
+    </div>
+  ) : null;
+  const deleteCurrentQuestion = async () => {
+    if (!currentQuestion || deleting || navigationBusy.current || loading) return;
+    if (!confirm(`删除“${currentQuestion.title}”？题目、收藏及相关学习记录将移除，此操作无法恢复。`)) return;
+    setDeleting(true);
+    navigationBusy.current = true;
+    const sequence = ++requestSequence.current;
+    progressSequence.current++;
+    let removed = false;
+    try {
+      await questionApi.delete(currentQuestion.id);
+      removed = true;
+      toast.success('题目已删除');
+      if (sequence !== requestSequence.current) return;
+      setIsEditing(false);
+      setShowAI(false);
+      setHistoryOpen(false);
+      setShowMobileQuestionActions(false);
+      setProgress(null);
+      const nextIndex = Math.max(0, Math.min(currentIndex, totalQuestions - 2));
+      const nextPage = Math.floor(nextIndex / PAGE_SIZE) + 1;
+      const response = await questionApi.getAll({ page: nextPage, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+      if (sequence !== requestSequence.current) return;
+      setQuestions(response.data.data);
+      setTotalQuestions(response.data.total);
+      setPageStart((nextPage - 1) * PAGE_SIZE);
+      setCurrentIndex(nextIndex);
+      setShowAnswer(autoShowAnswer);
+      void fetchTags();
+    } catch (error: any) {
+      if (removed) {
+        toast.error('题目已删除，列表刷新失败，请重试');
+        if (sequence === requestSequence.current) await fetchQuestions(false);
+      } else toast.error(error.response?.data?.error || '删除失败');
+    } finally {
+      navigationBusy.current = false;
+      setDeleting(false);
+    }
+  };
   const currentQuestionTags = currentQuestion ? parseQuestionTags(currentQuestion.tags) : [];
   const matchedEditTags = getFilteredTagSuggestions(editForm.tags, availableTags);
   const browsePositionPercent = totalQuestions > 0
@@ -447,13 +530,13 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
           </button>
         ) : null}
 
-        {mode === 'study' || canManageQuestions ? (
+        {mode === 'study' || canManageQuestions || canDeleteQuestion ? (
           <div className="relative shrink-0">
             <button
               type="button"
               aria-label={showMobileQuestionActions ? '收起题目操作' : '更多题目操作'}
               onClick={() => setShowMobileQuestionActions((value) => !value)}
-              disabled={!currentQuestion}
+              disabled={!currentQuestion || deleting}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 active:bg-slate-100 disabled:opacity-30"
             >
               {showMobileQuestionActions ? <X size={17} /> : <MoreHorizontal size={18} />}
@@ -484,6 +567,11 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   >
                     <Edit size={15} className="text-blue-500" />
                     编辑题目
+                  </button>
+                ) : null}
+                {canDeleteQuestion ? (
+                  <button type="button" disabled={deleting} onClick={() => void deleteCurrentQuestion()} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-600">
+                    <Trash2 size={15} /> 删除题目
                   </button>
                 ) : null}
               </div>
@@ -688,38 +776,41 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                     <X size={20} />
                   </button>
                 </div>
+                {supplementField && <button type="button" onClick={() => { supplementPending.current?.abort(); supplementPending.current = null; setSupplementField(null); }} className="text-sm text-violet-600">取消AI生成</button>}
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">题目内容</label>
                   <textarea
                     value={editForm.content}
-                    onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
-                    disabled={!canEditQuestionContent}
+                    onChange={(e) => { setEditForm({ ...editForm, content: e.target.value }); setSupplementPreview(null); }}
+                    disabled={!canEditQuestionContent || Boolean(supplementField)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 focus:bg-white transition-all resize-none"
                     rows={4}
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">答案</label>
+                  <div className="mb-1 flex items-center justify-between"><label className="text-sm font-medium text-gray-700">参考答案</label>{supplementButton('answer')}</div>
                   <textarea
                     value={editForm.answer}
-                    onChange={(e) => setEditForm({ ...editForm, answer: e.target.value })}
-                    disabled={!canEditQuestionContent}
+                    onChange={(e) => { setEditForm({ ...editForm, answer: e.target.value }); setSupplementPreview(null); }}
+                    disabled={!canEditQuestionContent || Boolean(supplementField)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all resize-none"
                     rows={4}
                   />
+                  {previewFor('answer')}
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">解析（可选）</label>
+                  <div className="mb-1 flex items-center justify-between"><label className="text-sm font-medium text-gray-700">思路解析（可选）</label>{supplementButton('explanation')}</div>
                   <textarea
                     value={editForm.explanation}
-                    onChange={(e) => setEditForm({ ...editForm, explanation: e.target.value })}
-                    disabled={!canEditQuestionContent}
+                    onChange={(e) => { setEditForm({ ...editForm, explanation: e.target.value }); setSupplementPreview(null); }}
+                    disabled={!canEditQuestionContent || Boolean(supplementField)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all resize-none"
                     rows={3}
                   />
+                  {previewFor('explanation')}
                 </div>
                 
                 <div className="flex gap-3">
@@ -788,6 +879,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   </button>
                   <button
                     onClick={saveEdit}
+                    disabled={Boolean(supplementField)}
                     className="px-4 py-2.5 bg-primary-600 rounded-lg text-white hover:bg-primary-700 transition-colors"
                   >
                     保存
@@ -833,6 +925,9 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                       >
                         <Edit size={20} />
                       </button>
+                    ) : null}
+                    {canDeleteQuestion ? (
+                      <button aria-label="删除当前题目" disabled={deleting} onClick={() => void deleteCurrentQuestion()} className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"><Trash2 size={20} /></button>
                     ) : null}
                     <button
                       aria-label={progress?.is_bookmarked ? '取消收藏当前题目' : '收藏当前题目'}
@@ -938,6 +1033,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
           {aiEnabled && canUseAI && currentQuestion && showAI && (
             <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-24 lg:mb-0">
               <AIAssistant
+                key={currentQuestion.id}
                 question={currentQuestion}
                 onClose={() => setShowAI(false)}
               />

@@ -13,9 +13,11 @@ import {
   getLibraryOwnerId,
   requirePermission,
   getSessionLifetime,
+  hasPermission,
 } from '../middleware/auth.js';
 import { parseSessionLifetime } from '../utils/sessionLifetime.js';
-import { DatabaseProfile, DatabaseValidationReport, DatabaseTableCountSummary, UserPermissions } from '../types/index.js';
+import { DatabaseProfile, DatabaseValidationReport, DatabaseTableCountSummary, User, UserPermissions } from '../types/index.js';
+import { serializeUser } from '../utils/users.js';
 import { parseTagAliasMap } from '../utils/tags.js';
 import {
   buildDatabaseConnectionConfig,
@@ -166,6 +168,25 @@ const ADMIN_PERMISSIONS: UserPermissions = {
 
 function validateId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function validateUserManagement(actor: User, role: User['role'], permissions?: UserPermissions, target?: User): string | null {
+  if (actor.role === 'admin') return null;
+  if (target?.role === 'admin' || role === 'admin') return '只有管理员可以管理管理员账户';
+  if ([target?.permissions, permissions].some((candidate) => candidate && (Object.keys(candidate) as Array<keyof UserPermissions>).some((key) => candidate[key] && !hasPermission(actor, key)))) {
+    return '不能授予超出自身范围的权限';
+  }
+  return null;
+}
+
+async function validateLibraryAssignment(userType: User['user_type'], ownerId: string | null, categoryScopes: string[]): Promise<string | null> {
+  if (userType !== 'integrated') return null;
+  const owner = ownerId ? await db.getUserById(ownerId) : undefined;
+  if (!owner || owner.user_type !== 'independent') return '集成题库必须接入现有独立题库用户';
+  for (const id of categoryScopes) {
+    if ((await db.getCategoryById(id))?.user_id !== owner.id) return '授权分类必须属于接入的题库';
+  }
+  return null;
 }
 
 function getDatabaseProfileOrThrow(profileId: string): DatabaseProfile {
@@ -621,7 +642,7 @@ router.post('/database/use-env', authMiddleware, requirePermission('system_manag
 router.get('/users', authMiddleware, requirePermission('user_manage', '需要用户管理权限'), async (_req: AuthRequest, res: Response) => {
   try {
     const users = await db.getAllUsers();
-    res.json(users);
+    res.json(users.map(serializeUser));
   } catch (error) {
     res.status(500).json({ error: '获取用户列表失败' });
   }
@@ -666,6 +687,14 @@ router.get('/users/stats', authMiddleware, requirePermission('user_manage', '需
 router.post('/users', authMiddleware, requirePermission('user_manage', '需要用户管理权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = createUserSchema.parse(req.body);
+    const permissions = data.role === 'admin' ? ADMIN_PERMISSIONS : (data.permissions || DEFAULT_USER_PERMISSIONS);
+    const managementError = validateUserManagement(req.user!, data.role, permissions);
+    if (managementError) { res.status(403).json({ error: managementError }); return; }
+    const userType = data.role === 'admin' ? 'independent' : data.userType;
+    const ownerId = userType === 'independent' ? null : (data.libraryOwnerId || req.user!.id);
+    const categoryScopes = userType === 'independent' ? [] : (data.categoryScopes || []);
+    const libraryError = await validateLibraryAssignment(userType, ownerId, categoryScopes);
+    if (libraryError) { res.status(400).json({ error: libraryError }); return; }
 
     const existingUsername = await db.getUserByUsername(data.username);
     if (existingUsername) {
@@ -680,8 +709,6 @@ router.post('/users', authMiddleware, requirePermission('user_manage', '需要�
     }
 
     const hashedPassword = await bcrypt.hash(data.password, 12);
-    const permissions = data.role === 'admin' ? ADMIN_PERMISSIONS : (data.permissions || DEFAULT_USER_PERMISSIONS);
-
     const user = await db.createUser({
       id: randomUUID(),
       username: data.username,
@@ -689,15 +716,15 @@ router.post('/users', authMiddleware, requirePermission('user_manage', '需要�
       password_hash: hashedPassword,
       must_change_password: false,
       role: data.role,
-      user_type: data.role === 'admin' ? 'independent' : data.userType,
-      library_owner_id: data.role === 'admin' || data.userType === 'independent' ? null : (data.libraryOwnerId || req.user!.id),
-      category_scopes: data.role === 'admin' || data.userType === 'independent' ? [] : (data.categoryScopes || []),
+      user_type: userType,
+      library_owner_id: ownerId,
+      category_scopes: categoryScopes,
       permissions,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 
-    res.status(201).json(user);
+    res.status(201).json(serializeUser(user));
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.errors.map((item) => item.message).join('；') });
@@ -721,6 +748,11 @@ router.delete('/users/:id', authMiddleware, requirePermission('user_manage', '�
       return;
     }
 
+    const target = await db.getUserById(id);
+    if (target) {
+      const managementError = validateUserManagement(req.user!, target.role, undefined, target);
+      if (managementError) { res.status(403).json({ error: managementError }); return; }
+    }
     const success = await db.deleteUser(id);
     if (!success) {
       res.status(400).json({ error: '无法删除该用户（可能是最后一个管理员）' });
@@ -753,14 +785,21 @@ router.put('/users/:id/role', authMiddleware, requirePermission('user_manage', '
       return;
     }
 
+    const target = await db.getUserById(id);
+    if (target) {
+      const permissions = role === 'user' && target.role === 'admin' ? DEFAULT_USER_PERMISSIONS : target.permissions;
+      const managementError = validateUserManagement(req.user!, role, permissions, target);
+      if (managementError) { res.status(403).json({ error: managementError }); return; }
+    }
     const user = await db.updateUserRole(id, role);
     if (!user) {
       res.status(404).json({ error: '用户不存在' });
       return;
     }
 
-    res.json(user);
+    res.json(serializeUser(user));
   } catch (error) {
+    if (error instanceof Error && error.message === 'LAST_ADMIN') { res.status(400).json({ error: '不能降级最后一个管理员' }); return; }
     res.status(500).json({ error: '更新用户角色失败' });
   }
 });
@@ -780,6 +819,13 @@ router.put('/users/:id', authMiddleware, requirePermission('user_manage', '需�
       res.status(404).json({ error: '用户不存在' });
       return;
     }
+
+    if (id === req.user!.id && data.role !== undefined && data.role !== user.role) {
+      res.status(400).json({ error: '不能修改自己的角色' });
+      return;
+    }
+    const managementError = validateUserManagement(req.user!, data.role || user.role, data.permissions, user);
+    if (managementError) { res.status(403).json({ error: managementError }); return; }
 
     const updateData: {
       username?: string;
@@ -817,8 +863,10 @@ router.put('/users/:id', authMiddleware, requirePermission('user_manage', '需�
     if (data.role) {
       updateData.role = data.role;
     }
-    if (data.userType) {
-      updateData.user_type = data.role === 'admin' ? 'independent' : data.userType;
+    if ((data.role || user.role) === 'admin') {
+      updateData.user_type = 'independent';
+    } else if (data.userType) {
+      updateData.user_type = data.userType;
     }
     if (data.libraryOwnerId !== undefined) {
       updateData.library_owner_id = (data.role === 'admin' || data.userType === 'independent') ? null : data.libraryOwnerId;
@@ -842,14 +890,20 @@ router.put('/users/:id', authMiddleware, requirePermission('user_manage', '需�
       updateData.category_scopes = [];
     }
 
+    const libraryError = await validateLibraryAssignment(updateData.user_type || user.user_type,
+      updateData.library_owner_id !== undefined ? updateData.library_owner_id : user.library_owner_id,
+      updateData.category_scopes ?? user.category_scopes);
+    if (libraryError) { res.status(400).json({ error: libraryError }); return; }
+
     if (Object.keys(updateData).length === 0) {
       res.status(400).json({ error: '没有需要更新的内容' });
       return;
     }
 
     const updatedUser = await db.updateUser(id, updateData);
-    res.json(updatedUser);
+    res.json(serializeUser(updatedUser!));
   } catch (error) {
+    if (error instanceof Error && error.message === 'LAST_ADMIN') { res.status(400).json({ error: '不能降级最后一个管理员' }); return; }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: '输入验证失败', details: error.errors });
       return;

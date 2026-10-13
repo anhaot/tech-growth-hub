@@ -76,7 +76,11 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
   next();
 };
 
-export const errorHandler = (err: Error, _req: Request, res: Response, _next: NextFunction): void => {
+export const errorHandler = (err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction): void => {
+  if (res.headersSent) { next(err); return; }
+  if (err.type === 'entity.parse.failed') { res.status(400).json({ error: '请求内容不是有效的 JSON' }); return; }
+  if (err.type === 'entity.too.large' || err.type === 'parameters.too.many') { res.status(413).json({ error: '请求内容过大' }); return; }
+  if (err.type === 'charset.unsupported' || err.type === 'encoding.unsupported') { res.status(415).json({ error: '请求内容编码不受支持' }); return; }
   console.error('Error:', err);
   res.status(500).json({ error: config.nodeEnv === 'development' ? err.message : '服务器内部错误' });
 };

@@ -27,6 +27,7 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}-${{ matrix.component }}
+          flavor: latest=false
           tags: |
             type=ref,event=tag
       - uses: docker/build-push-action@v6
@@ -124,7 +125,8 @@ jobs:
           mkdir -p release/api release/web
           cp -R api/dist api/node_modules api/package.json api/package-lock.json release/api/
           cp -R web/dist web/nginx.conf release/web/
-          cp compose.release.yaml .env.example LICENSE README.md release/
+          cp compose.release.yaml .env.example LICENSE release/
+          cp docs/release-assets.md release/README.md
           cp docs/release-assets.md release/RELEASE-ASSETS.md
           tar -czf "release-assets/tech-growth-hub-${GITHUB_REF_NAME}-prebuilt-linux-amd64.tar.gz" -C release .
       - name: Generate checksums

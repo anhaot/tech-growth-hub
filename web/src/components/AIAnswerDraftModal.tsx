@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { aiApi, questionApi } from '@/api';
-import { AIConfig, Question } from '@/types';
+import { AIModelOption, Question } from '@/types';
+import { useAuthStore } from '@/store';
+import { hasPermission } from '@/lib/permissions';
+import { getAvailableAIModels, getPreferredAIModel, resolveAIModel, savePreferredAIModel } from '@/lib/aiModels';
 import { MAX_QUESTION_TAGS, parseQuestionTags } from '@/lib/questionTags';
 import { renderSafeMarkdown } from '@/lib/renderMarkdown';
 import { applyTagSuggestion, getFilteredTagSuggestions } from '@/lib/tagSuggestions';
@@ -34,11 +37,13 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
   onSaved,
   introText = '只生成答案和解析，不改题干、标题和难度。',
 }) => {
+  const canEditTags = hasPermission(useAuthStore((state) => state.user), 'question_edit_meta');
+  const generationSequence = useRef(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [configsLoading, setConfigsLoading] = useState(false);
-  const [aiConfigs, setAiConfigs] = useState<AIConfig[]>([]);
-  const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || '');
+  const [aiConfigs, setAiConfigs] = useState<AIModelOption[]>([]);
+  const [provider, setProvider] = useState(getPreferredAIModel);
   const [mode, setMode] = useState<AIGenerateMode>('practice');
   const [saveMode, setSaveMode] = useState<'replace' | 'append'>('replace');
   const [rawResult, setRawResult] = useState('');
@@ -51,30 +56,26 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
   const [tagsInput, setTagsInput] = useState('');
 
   useEffect(() => {
-    if (!isOpen || !question) {
-      setDraft(null);
-      setTagsInput('');
-      setRawResult('');
-      setMode('practice');
-      setSaveMode('replace');
-    }
-  }, [isOpen, question]);
+    generationSequence.current++;
+    setLoading(false);
+    setDraft(null);
+    setTagsInput('');
+    setRawResult('');
+    setMode('practice');
+    setSaveMode('replace');
+    return () => { generationSequence.current++; };
+  }, [isOpen, question?.id]);
 
   useEffect(() => {
     if (!isOpen) return;
 
     let active = true;
     setConfigsLoading(true);
-    aiApi.getConfigs()
+    aiApi.getStatus()
       .then((response) => {
         if (!active) return;
-        setAiConfigs(response.data);
-        if (!provider) {
-          const activeConfig = response.data.find((config) => config.isActive);
-          if (activeConfig) {
-            setProvider(activeConfig.displayName || activeConfig.provider);
-          }
-        }
+        setAiConfigs(getAvailableAIModels(response.data));
+        setProvider((current) => resolveAIModel(response.data, current));
       })
       .catch(() => {
         if (active) {
@@ -90,12 +91,10 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
     return () => {
       active = false;
     };
-  }, [isOpen, provider]);
+  }, [isOpen]);
 
   useEffect(() => {
-    if (provider) {
-      localStorage.setItem('ai_provider', provider);
-    }
+    savePreferredAIModel(provider);
   }, [provider]);
 
   const currentModeMeta = aiGenerateModes.find((item) => item.value === mode);
@@ -104,11 +103,13 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
   const matchedTags = getFilteredTagSuggestions(tagsInput, availableTags);
 
   const handleGenerate = async () => {
-    if (!question) return;
+    if (!question || loading || saving) return;
 
+    const sequence = ++generationSequence.current;
     setLoading(true);
     try {
       const response = await aiApi.answerDraft(question.id, mode, provider || undefined);
+      if (sequence !== generationSequence.current) return;
       setDraft({
         ...response.data.draft,
         answer: formatStructuredDraftText(response.data.draft.answer),
@@ -117,14 +118,14 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
       setTagsInput((response.data.draft.tags || []).join(', '));
       setRawResult(response.data.raw);
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'AI答案生成失败');
+      if (sequence === generationSequence.current) toast.error(error.response?.data?.error || 'AI答案生成失败');
     } finally {
-      setLoading(false);
+      if (sequence === generationSequence.current) setLoading(false);
     }
   };
 
   const handleSave = async () => {
-    if (!question || !draft) return;
+    if (!question || !draft || saving || loading) return;
 
     setSaving(true);
     try {
@@ -138,7 +139,7 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
           expectedRevision: question.revision,
         answer: draft.answer,
         explanation: nextExplanation,
-        tags: nextTags,
+        ...(canEditTags ? { tags: nextTags } : {}),
       });
       toast.success('AI 答案已保存');
       onSaved({ answer: draft.answer, explanation: nextExplanation });
@@ -176,15 +177,15 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/20" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/20" onClick={() => { if (!saving) onClose(); }} />
       <div className="relative flex min-h-full items-center justify-center px-4 py-6">
-        <div className="app-modal-panel flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden">
+        <div role="dialog" aria-modal="true" aria-label="AI 答案生成" data-testid="ai-answer-draft-modal" className="app-modal-panel flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden">
           <div className="app-modal-header flex items-center justify-between px-6 py-4">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">AI 答案生成</h2>
               <p className="text-sm text-gray-500">{introText}</p>
             </div>
-            <button onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
+            <button disabled={saving} onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
               <X size={20} />
             </button>
           </div>
@@ -208,7 +209,15 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                       <button
                         key={modeOption.value}
                         type="button"
-                        onClick={() => setMode(modeOption.value)}
+                        disabled={loading || saving}
+                        onClick={() => {
+                          if (modeOption.value !== mode) {
+                            setMode(modeOption.value);
+                            setDraft(null);
+                            setRawResult('');
+                            setTagsInput('');
+                          }
+                        }}
                         className={`rounded-xl border px-3 py-3 text-center transition-all ${
                           active
                             ? 'border-primary-500 bg-primary-50 shadow-sm ring-2 ring-primary-500/10'
@@ -234,14 +243,15 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                 ) : aiConfigs.length > 0 ? (
                   <select
                     value={provider}
+                    disabled={loading || saving}
                     onChange={(e) => setProvider(e.target.value)}
                     className="select-field w-full px-4 pr-10 py-3 bg-white text-gray-700"
                   >
                     {aiConfigs.map((config) => {
-                      const value = config.displayName || config.provider;
+                      const value = config.id;
                       return (
                         <option key={config.id} value={value}>
-                          {config.displayName || config.provider}
+                          {config.label}
                           {config.isActive ? '（当前默认）' : ''}
                         </option>
                       );
@@ -317,7 +327,7 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                     />
                   </div>
 
-                  <div>
+                  {canEditTags && <div>
                     <div className="mb-2 flex items-center justify-between">
                       <div className="text-sm font-semibold text-gray-900">标签建议</div>
                       <span className="text-xs text-gray-500">可点选 AI 建议，也可手动补充标签</span>
@@ -385,7 +395,7 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                         </div>
                       ) : null}
                     </div>
-                  </div>
+                  </div>}
 
                   <div>
                     <div className="mb-2 text-sm font-semibold text-gray-900">保存方式</div>
@@ -427,7 +437,7 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
           </div>
 
           <div className="flex justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-6 py-4">
-            <button onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-gray-700 transition-all hover:bg-gray-50">
+            <button disabled={saving} onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-gray-700 transition-all hover:bg-gray-50">
               取消
             </button>
             <button

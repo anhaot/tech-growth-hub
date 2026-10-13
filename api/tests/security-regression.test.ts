@@ -125,6 +125,40 @@ test.after(async () => {
   }
 });
 
+test('batch bookmark removal isolates users and modes, validates access before writing, and preserves visits', async () => {
+  const owner = await createUser('bookmark-batch-owner', 'bookmark-batch-owner@example.com', 'Password123');
+  const other = await createUser('bookmark-batch-other', 'bookmark-batch-other@example.com', 'Password123');
+  const first = await createQuestion(owner.user.id, 'batch first');
+  const second = await createQuestion(owner.user.id, 'batch second');
+  const foreign = await createQuestion(other.user.id, 'batch foreign');
+  const stamp = '2026-10-01T01:02:03.000Z';
+  for (const [userId, id, mode] of [
+    [owner.user.id, first.id, 'study'], [owner.user.id, second.id, 'study'],
+    [owner.user.id, first.id, 'quiz'], [other.user.id, first.id, 'study'],
+  ]) await db.upsertLearningProgress({ id: randomUUID(), user_id: userId, question_id: id, mode, is_bookmarked: true, last_viewed_at: stamp, view_count: 0 });
+  const before = await db.getLearningProgress(owner.user.id, first.id, 'study');
+  const post = (body: unknown) => app.post('/api/questions/bookmarked/remove').set('Authorization', `Bearer ${owner.token}`).send(body);
+  assert.equal((await post({ ids: [first.id, foreign.id], mode: 'study' })).status, 404);
+  assert.equal(Boolean((await db.getLearningProgress(owner.user.id, first.id, 'study'))?.is_bookmarked), true);
+  for (const body of [{ ids: [] }, { ids: ['invalid'] }, { ids: [first.id], mode: 'invalid' }, { ids: Array(501).fill(first.id) }]) {
+    assert.equal((await post(body)).status, 400);
+  }
+  const response = await post({ ids: [first.id, second.id, first.id], mode: 'study' });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.removedCount, 2);
+  const after = await db.getLearningProgress(owner.user.id, first.id, 'study');
+  assert.equal(Boolean(after?.is_bookmarked), false);
+  assert.equal(after?.view_count, before?.view_count);
+  assert.equal(after?.last_viewed_at, before?.last_viewed_at);
+  assert.equal(Boolean((await db.getLearningProgress(owner.user.id, first.id, 'quiz'))?.is_bookmarked), true);
+  assert.equal(Boolean((await db.getLearningProgress(other.user.id, first.id, 'study'))?.is_bookmarked), true);
+  assert.equal((await post({ ids: [first.id], mode: 'study' })).body.removedCount, 0);
+  const category = await db.createCategory({ id: randomUUID(), name: 'Restricted bookmark category', parent_id: null, user_id: owner.user.id, created_at: stamp, updated_at: stamp });
+  await db.updateUser(owner.user.id, { user_type: 'integrated', library_owner_id: owner.user.id, category_scopes: [category.id] });
+  assert.equal((await post({ ids: [first.id], mode: 'quiz' })).status, 404);
+  assert.equal(Boolean((await db.getLearningProgress(owner.user.id, first.id, 'quiz'))?.is_bookmarked), true);
+});
+
 test('default admin must change the initial password before using protected APIs', async () => {
   const initialLogin = await app
     .post('/api/auth/login')
@@ -956,14 +990,58 @@ test('large libraries paginate, locate and navigate past 1000 and scan duplicate
   assert.equal((await app.get(`/api/questions/duplicates/scan/${started.body.id}`).set('Authorization', `Bearer ${other.token}`)).status, 404);
 });
 
+test('AI supplements preserve full edited drafts, enforce access, return truncation and never write questions', async (t) => {
+  const { aiService } = await import('../src/services/ai.js');
+  const owner = await createUser('supplement-owner', 'supplement-owner@example.com', 'Password123');
+  const other = await createUser('supplement-other', 'supplement-other@example.com', 'Password123');
+  const q = await createQuestion(owner.user.id, 'supplement question');
+  const prompts: string[] = [];
+  let content = '补充后的完整内容';
+  let truncated = false;
+  t.mock.method(aiService, 'getProvider', async () => ({ name: 'isolated', chat: async () => content, chatResult: async (messages: { role: string; content: string }[]) => {
+    prompts.push(messages[0].content);
+    return { content, truncated, finishReason: truncated ? 'length' : 'stop', continuationCount: 0 };
+  } }));
+  const draft = '最新编辑中的正文\n```bash\nfree -h\n```\n' + '完整草稿'.repeat(5000) + '\n末尾必须保留';
+  const input = { questionId: q.id, field: 'answer', answer: draft, explanation: '编辑中的解析' };
+  const auth = { Authorization: `Bearer ${owner.token}`, 'X-Forwarded-For': nextTestIp() };
+  const before = await db.getQuestionById(q.id);
+  for (const field of ['answer', 'explanation']) {
+    const response = await app.post('/api/ai/supplement').set(auth).send({ ...input, field });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.result, content);
+    assert.equal(response.body.field, field);
+    assert.equal(response.body.truncated, false);
+    const data = JSON.parse(prompts.at(-1)!.split('\n').at(-1)!);
+    assert.equal(data.answer, draft);
+    assert.equal(data.explanation, input.explanation);
+  }
+  assert.deepEqual(await db.getQuestionById(q.id), before);
+  const calls = prompts.length;
+  assert.equal((await app.post('/api/ai/supplement').set('Authorization', `Bearer ${other.token}`).send(input)).status, 404);
+  await db.updateUser(owner.user.id, { permissions: { ...NO_PERMISSIONS, question_view: true, ai_use: true } });
+  assert.equal((await app.post('/api/ai/supplement').set(auth).send(input)).status, 403);
+  assert.equal(prompts.length, calls);
+  await db.updateUser(owner.user.id, { permissions: { ...NO_PERMISSIONS, question_edit_content: true, ai_polish: true } });
+  assert.equal((await app.post('/api/ai/supplement').set(auth).send({ ...input, field: 'title' })).status, 400);
+  assert.equal((await app.post('/api/ai/supplement').set(auth).send({ ...input, answer: 'a'.repeat(50001) })).status, 400);
+  content = '';
+  assert.equal((await app.post('/api/ai/supplement').set(auth).send(input)).status, 502);
+  content = '尚未结束'; truncated = true;
+  const partial = await app.post('/api/ai/supplement').set(auth).send(input);
+  assert.equal(partial.status, 200);
+  assert.equal(partial.body.truncated, true);
+  assert.deepEqual(await db.getQuestionById(q.id), before);
+});
+
 test('AI disabled settings persist in the database and reject all content generation endpoints', async () => {
   const admin = await app.post('/api/auth/login').set('X-Forwarded-For', nextTestIp()).send({ username: 'admin', password: 'AdminPass123' });
-  const auth = { Authorization: `Bearer ${admin.body.token}` };
+  const auth = { Authorization: `Bearer ${admin.body.token}`, 'X-Forwarded-For': nextTestIp() };
   try {
     assert.equal((await app.put('/api/ai/settings').set(auth).send({ enabled: false })).status, 200);
     assert.equal(await db.getSetting('ai_enabled'), 'false');
     assert.equal((await app.get('/api/ai/status').set(auth)).body.enabled, false);
-    for (const endpoint of ['analyze', 'expand', 'recommend', 'generate', 'explain', 'chat', 'test-config', 'batch-generate', 'polish-question', 'answer-drafts/raw', 'answer-draft', 'batch-tags']) {
+    for (const endpoint of ['analyze', 'expand', 'recommend', 'generate', 'explain', 'chat', 'test-config', 'batch-generate', 'polish-question', 'answer-drafts/raw', 'answer-draft', 'supplement', 'batch-tags']) {
       const denied = await app.post(`/api/ai/${endpoint}`).set(auth).send({});
       assert.equal(denied.status, 403, endpoint);
       assert.match(denied.body.error, /已关闭/);
@@ -1111,4 +1189,132 @@ test('CSV and Markdown previews preserve metadata and code, and malformed inputs
   assert.equal((await app.post('/api/import/preview/json').set('Authorization', `Bearer ${user.token}`).attach('file', Buffer.from('[]'), 'wrong.csv')).status, 400);
   assert.equal((await app.post('/api/import/preview/text').set('Authorization', `Bearer ${user.token}`).send({ questions: [] })).status, 400);
   assert.equal((await db.getQuestions(user.user.id)).total, 0);
+});
+
+test('delegated user management cannot take over administrators or grant higher permissions, and responses hide password hashes', async () => {
+  const admin = await app.post('/api/auth/login').set('X-Forwarded-For', nextTestIp()).send({ username: 'admin', password: 'AdminPass123' });
+  assert.equal(admin.status, 200);
+  const manager = await createUser('delegated-manager', 'delegated-manager@example.com', 'Password123');
+  await db.updateUser(manager.user.id, { permissions: { ...NO_PERMISSIONS, user_manage: true } });
+  const authorization = `Bearer ${manager.token}`;
+  const before = await db.getUserById(admin.body.user.id);
+  const createdAdmin = await app.post('/api/admin/users').set('Authorization', authorization)
+    .send({ username: 'unauthorized-admin', email: 'unauthorized-admin@example.com', password: 'Password123', role: 'admin' });
+  assert.equal(createdAdmin.status, 403);
+  for (const body of [{ password: 'TakenOver123' }, { role: 'user' }, { email: 'taken-over@example.com' }]) {
+    assert.equal((await app.put(`/api/admin/users/${before!.id}`).set('Authorization', authorization).send(body)).status, 403);
+  }
+  assert.equal((await app.delete(`/api/admin/users/${before!.id}`).set('Authorization', authorization)).status, 403);
+  assert.equal((await app.put(`/api/admin/users/${before!.id}/role`).set('Authorization', authorization).send({ role: 'user' })).status, 403);
+  assert.deepEqual(await db.getUserById(before!.id), before);
+  assert.equal((await app.put(`/api/admin/users/${manager.user.id}`).set('Authorization', authorization)
+    .send({ permissions: { ...NO_PERMISSIONS, user_manage: true, system_manage: true } })).status, 403);
+
+  const created = await app.post('/api/admin/users').set('Authorization', authorization)
+    .send({ username: 'managed-learner', email: 'managed-learner@example.com', password: 'Password123', permissions: NO_PERMISSIONS });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.password_hash, undefined);
+  const edited = await app.put(`/api/admin/users/${created.body.id}`).set('Authorization', authorization).send({ username: 'managed-renamed' });
+  assert.equal(edited.status, 200); assert.equal(edited.body.password_hash, undefined);
+  const role = await app.put(`/api/admin/users/${created.body.id}/role`).set('Authorization', authorization).send({ role: 'user' });
+  assert.equal(role.status, 200); assert.equal(role.body.password_hash, undefined);
+  assert.equal((await app.put(`/api/admin/users/${created.body.id}/role`).set('Authorization', authorization).send({ role: 'admin' })).status, 403);
+  await db.updateUser(created.body.id, { permissions: { ...NO_PERMISSIONS, system_manage: true } });
+  assert.equal((await app.put(`/api/admin/users/${created.body.id}`).set('Authorization', authorization).send({ password: 'TakenOver123' })).status, 403);
+  const users = await app.get('/api/admin/users').set('Authorization', authorization);
+  assert.equal(users.status, 200);
+  assert.ok(users.body.every((user: Record<string, unknown>) => !Object.hasOwn(user, 'password_hash')));
+  assert.equal((await app.put(`/api/admin/users/${before!.id}`).set('Authorization', `Bearer ${admin.body.token}`).send({ role: 'user' })).status, 400);
+  assert.equal((await db.getUserById(before!.id))?.role, 'admin');
+});
+
+test('integrated user assignments validate the owner and categories and promotions clear shared-library state', async () => {
+  const admin = await app.post('/api/auth/login').set('X-Forwarded-For', nextTestIp()).send({ username: 'admin', password: 'AdminPass123' });
+  const owner = await createUser('assignment-owner', 'assignment-owner@example.com', 'Password123');
+  const category = await db.createCategory({ id: randomUUID(), name: 'assignment', description: null, parent_id: null, user_id: owner.user.id, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  const create = (body: Record<string, unknown>) => app.post('/api/admin/users').set('Authorization', `Bearer ${admin.body.token}`)
+    .send({ username: 'assignment-integrated', email: 'assignment-integrated@example.com', password: 'Password123', userType: 'integrated', ...body });
+  assert.equal((await create({ libraryOwnerId: randomUUID() })).status, 400);
+  assert.equal((await create({ libraryOwnerId: admin.body.user.id, categoryScopes: [category.id] })).status, 400);
+  const valid = await create({ libraryOwnerId: owner.user.id, categoryScopes: [category.id] });
+  assert.equal(valid.status, 201);
+  assert.equal((await create({ username: 'assignment-child', email: 'assignment-child@example.com', libraryOwnerId: valid.body.id })).status, 400);
+  const edit = (body: Record<string, unknown>) => app.put(`/api/admin/users/${valid.body.id}`).set('Authorization', `Bearer ${admin.body.token}`).send(body);
+  assert.equal((await edit({ libraryOwnerId: admin.body.user.id })).status, 400);
+  const promoted = await edit({ role: 'admin' });
+  assert.equal(promoted.status, 200);
+  assert.equal(promoted.body.user_type, 'independent');
+  assert.equal(promoted.body.library_owner_id, null);
+  assert.deepEqual(promoted.body.category_scopes, []);
+  assert.equal(promoted.body.password_hash, undefined);
+});
+
+test('AI creation, activation and linked credential updates are atomic', async () => {
+  const user = await createUser('atomic-ai', 'atomic-ai@example.com', 'Password123');
+  const active = await createAiConfig(user.user.id);
+  const inactive = { ...active, id: randomUUID(), is_active: false };
+  await db.createAIConfig(inactive);
+  assert.equal((await db.getActiveAIConfig(user.user.id))?.id, active.id);
+  await assert.rejects(db.createAIConfig(active));
+  assert.equal((await db.getActiveAIConfig(user.user.id))?.id, active.id);
+  await Promise.all([db.activateAIConfigForUser(active.id, user.user.id), db.activateAIConfigForUser(inactive.id, user.user.id)]);
+  assert.equal((await db.getAIConfigsByUserId(user.user.id)).filter(config => config.is_active).length, 1);
+  await assert.rejects(db.activateAIConfigForUser(randomUUID(), user.user.id), /AI_CONFIG_NOT_FOUND/);
+  assert.equal((await db.getActiveAIConfig(user.user.id))?.id, inactive.id);
+  await db.updateAIConfig(active.id, { is_active: true });
+  assert.equal((await db.getAIConfigsByUserId(user.user.id)).filter(config => config.is_active).length, 1);
+  assert.equal((await db.getActiveAIConfig(user.user.id))?.id, active.id);
+  const now = new Date().toISOString();
+  const credential = await db.createAICredential({ id: randomUUID(), user_id: user.user.id, name: 'atomic', base_url: 'https://api.openai.com/v1', api_key: 'original-key', created_at: now, updated_at: now });
+  await db.updateAIConfig(active.id, { credential_id: credential.id, api_key: credential.api_key });
+  await db.run(`CREATE TRIGGER reject_atomic_ai_update BEFORE UPDATE ON ai_configs WHEN OLD.id = '${active.id}' BEGIN SELECT RAISE(ABORT, 'injected linked update failure'); END`);
+  try {
+    await assert.rejects(db.updateAICredential(credential.id, user.user.id, { api_key: 'replacement-key' }), /injected linked update failure/);
+    assert.equal((await db.getAICredentialByIdForUser(credential.id, user.user.id))?.api_key, 'original-key');
+    assert.equal((await db.getAIConfigById(active.id))?.api_key, 'original-key');
+  } finally { await db.run('DROP TRIGGER reject_atomic_ai_update'); }
+});
+
+test('tags with prototype names are preserved and long tag health comparisons stay bounded', async () => {
+  const { normalizeTagsInput, parseTagAliasMap } = await import('../src/utils/tags.js');
+  assert.deepEqual(normalizeTagsInput(['constructor', '__proto__', 'toString']), ['constructor', '__proto__', 'tostring']);
+  const aliases = parseTagAliasMap('{"constructor":"construction","__proto__":"prototype"}');
+  assert.deepEqual(normalizeTagsInput(['constructor', '__proto__'], aliases), ['construction', 'prototype']);
+  const user = await createUser('tag-health-bounded', 'tag-health-bounded@example.com', 'Password123');
+  const tags = [`${'x'.repeat(20000)}a`, `${'x'.repeat(20000)}b`, 'constructor', '__proto__'];
+  const created = await app.post('/api/questions').set('Authorization', `Bearer ${user.token}`)
+    .send({ title: 'long tag health', content: 'body', tags });
+  assert.equal(created.status, 201);
+  assert.deepEqual(JSON.parse(created.body.tags), tags);
+  const health = await app.get('/api/questions/tags/health').set('Authorization', `Bearer ${user.token}`);
+  assert.equal(health.status, 200);
+  assert.ok(health.body.similarPairs.some((pair: { left: string; right: string }) => pair.left === tags[0] && pair.right === tags[1]));
+});
+
+test('malformed JSON and oversized payloads return client errors', async () => {
+  const malformed = await app.post('/api/auth/login').set('Content-Type', 'application/json').send('{"username":');
+  assert.equal(malformed.status, 400);
+  const oversized = await app.post('/api/auth/login').set('Content-Type', 'application/json').send(JSON.stringify({ username: 'x'.repeat(10 * 1024 * 1024) }));
+  assert.equal(oversized.status, 413);
+});
+
+test('concurrent deletion and both role update paths preserve the last administrator', async () => {
+  const { DatabaseManager } = await import('../src/database/index.js');
+  for (const action of ['delete', 'role', 'user'] as const) {
+    const isolated = new DatabaseManager({ type: 'sqlite', sqlite: { path: ':memory:' }, mysql: { host: '', port: 3306, user: '', password: '', database: '' } }, { skipDefaultAdmin: true });
+    await isolated.connect();
+    try {
+      const now = new Date().toISOString();
+      const administrators = await Promise.all([0, 1].map(index => isolated.createUser({ id: randomUUID(), username: `concurrent-admin-${index}`, email: `admin-${index}@example.com`, password_hash: 'unused-hash', must_change_password: false, role: 'admin', user_type: 'independent', library_owner_id: null, category_scopes: [], permissions: NO_PERMISSIONS, created_at: now, updated_at: now })));
+      const results = await Promise.allSettled(administrators.map(admin => action === 'delete'
+        ? isolated.deleteUser(admin.id) : action === 'role' ? isolated.updateUserRole(admin.id, 'user')
+          : isolated.updateUser(admin.id, { role: 'user', permissions: NO_PERMISSIONS })));
+      const remaining = (await isolated.getAllUsers()).filter(user => user.role === 'admin');
+      assert.equal(remaining.length, 1);
+      assert.equal(results.filter(result => result.status === 'fulfilled' && result.value !== false).length, 1);
+      assert.equal(await isolated.deleteUser(remaining[0].id), false);
+      await assert.rejects(isolated.updateUserRole(remaining[0].id, 'user'), /LAST_ADMIN/);
+      await assert.rejects(isolated.updateUser(remaining[0].id, { role: 'user', permissions: NO_PERMISSIONS }), /LAST_ADMIN/);
+    } finally { await isolated.close(); }
+  }
 });

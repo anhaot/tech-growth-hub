@@ -11,6 +11,7 @@ services:
       NODE_ENV: production
       PORT: 3001
       TRUST_PROXY: 1
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-auto}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:10089,http://127.0.0.1:10089}
       JWT_SECRET: ${JWT_SECRET:?请在 .env 中设置随机 JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { questionApi, categoryApi, importApi, aiApi } from '@/api';
-import { Question, Category, PaginatedResult, SimilarQuestionPair, DuplicateScanResult, AIConfig, AIModelOption } from '@/types';
+import { Question, Category, PaginatedResult, SimilarQuestionPair, DuplicateScanResult, AIModelOption } from '@/types';
+import { getAvailableAIModels, getPreferredAIModel, resolveAIModel, savePreferredAIModel } from '@/lib/aiModels';
 import { useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
 import { getTagColorClasses } from '@/lib/tagColors';
@@ -1586,8 +1587,8 @@ interface AIBatchTagsModalProps {
 const AIBatchTagsModal: React.FC<AIBatchTagsModalProps> = ({ isOpen, selectedCount, onClose, onSubmit }) => {
   const [loading, setLoading] = useState(false);
   const [configsLoading, setConfigsLoading] = useState(false);
-  const [aiConfigs, setAiConfigs] = useState<AIConfig[]>([]);
-  const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || '');
+  const [aiConfigs, setAiConfigs] = useState<AIModelOption[]>([]);
+  const [provider, setProvider] = useState(getPreferredAIModel);
   const [saveMode, setSaveMode] = useState<'add' | 'replace'>('add');
 
   useEffect(() => {
@@ -1598,16 +1599,11 @@ const AIBatchTagsModal: React.FC<AIBatchTagsModalProps> = ({ isOpen, selectedCou
 
     let active = true;
     setConfigsLoading(true);
-    aiApi.getConfigs()
+    aiApi.getStatus()
       .then((response) => {
         if (!active) return;
-        setAiConfigs(response.data);
-        if (!provider) {
-          const activeConfig = response.data.find((config) => config.isActive);
-          if (activeConfig) {
-            setProvider(activeConfig.displayName || activeConfig.provider);
-          }
-        }
+        setAiConfigs(getAvailableAIModels(response.data));
+        setProvider((current) => resolveAIModel(response.data, current));
       })
       .catch(() => {
         if (active) {
@@ -1623,12 +1619,10 @@ const AIBatchTagsModal: React.FC<AIBatchTagsModalProps> = ({ isOpen, selectedCou
     return () => {
       active = false;
     };
-  }, [isOpen, provider]);
+  }, [isOpen]);
 
   useEffect(() => {
-    if (provider) {
-      localStorage.setItem('ai_provider', provider);
-    }
+    savePreferredAIModel(provider);
   }, [provider]);
 
   if (!isOpen) return null;
@@ -1703,10 +1697,10 @@ const AIBatchTagsModal: React.FC<AIBatchTagsModalProps> = ({ isOpen, selectedCou
                   className="select-field w-full px-4 py-3 pr-10 bg-white text-gray-700"
                 >
                   {aiConfigs.map((config) => {
-                    const value = config.displayName || config.provider;
+                    const value = config.id;
                     return (
                       <option key={config.id} value={value}>
-                        {config.displayName || config.provider}
+                        {config.label}
                         {config.isActive ? '（当前默认）' : ''}
                       </option>
                     );

@@ -97,7 +97,7 @@ const AppContent: React.FC = () => {
         setAuth(response.data);
       })
       .catch((error) => {
-        if (error.response || !useAuthStore.getState().isAuthenticated) logout();
+        if ([401, 403].includes(error.response?.status) || !useAuthStore.getState().isAuthenticated) logout();
       })
       .finally(() => {
         setAuthReady(true);
@@ -105,15 +105,20 @@ const AppContent: React.FC = () => {
   }, [isAuthenticated, logout, setAuth]);
 
   useEffect(() => {
+    let active = true;
     if (isAuthenticated && !user?.must_change_password && hasPermission(user, 'ai_use')) {
       aiApi.getStatus().then((response) => {
+        if (!active) return;
         setStatus({
           enabled: response.data.enabled,
           defaultProvider: response.data.defaultProvider,
           availableProviders: response.data.availableProviders,
         });
       }).catch(console.error);
+    } else {
+      setStatus({ enabled: false, defaultProvider: 'openai', availableProviders: [] });
     }
+    return () => { active = false; };
   }, [isAuthenticated, user, setStatus]);
 
   return (

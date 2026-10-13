@@ -1,0 +1,10 @@
+import org.gradle.api.tasks.compile.JavaCompile
+
+allprojects {
+    tasks.withType(JavaCompile).configureEach {
+        options.fork = true
+        options.forkOptions.memoryInitialSize = '64m'
+        options.forkOptions.memoryMaximumSize = '256m'
+        options.forkOptions.jvmArgs = ['-XX:ActiveProcessorCount=1', '-XX:+UseSerialGC']
+    }
+}

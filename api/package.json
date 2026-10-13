@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test ./tests/security-regression.test.ts",
+    "test": "tsx --test --test-concurrency=1 ./tests/security-regression.test.ts ./tests/ai-completion.test.ts",
     "test:mysql": "tsx --test ./tests/mysql-backup-regression.test.ts",
     "db:migrate:sqlite-to-mysql": "tsx src/scripts/migrateSqliteToMysql.ts"
   },

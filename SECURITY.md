@@ -23,4 +23,4 @@ You should receive an acknowledgement within 72 hours. After triage, maintainers
 - Rotate any credential that may have appeared in logs, shell history, screenshots, or commits.
 - Apply dependency and container updates promptly.
 
-See [docs/security-audit.md](./docs/security-audit.md) for the repository security review and verification scope.
+See [deployment guidance](./docs/deployment.md) and [permission rules](./docs/permissions.md) for production setup and authorization boundaries.

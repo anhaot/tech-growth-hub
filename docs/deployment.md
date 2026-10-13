@@ -1,7 +1,5 @@
 # 部署说明
 
-当前工作区部署详情见 [2026-10-08 部署记录](deployment-2026-10-08.md)。
-
 ## 1. 运行方式
 
 项目支持两种主要运行方式：
@@ -30,6 +28,7 @@ Compose 会把 API 和 Web 构建为相同版本；未设置 `APP_VERSION` 时�
 ```bash
 cp .env.example .env
 openssl rand -hex 32  # 为 JWT、AI 加密、数据库用户和 root 分别生成不同的值
+# 将生成的四个值分别填入 .env，替换模板中的占位符后再启动
 docker compose up -d --build
 ```
 
@@ -169,7 +168,7 @@ MYSQL_DATABASE=tech_growth_hub
 后端提供：
 
 ```text
-/api/health        # 综合状态
+/api/health        # 进程存活，与 /api/health/live 相同
 /api/health/live   # 进程存活
 /api/health/ready  # 数据库就绪
 ```

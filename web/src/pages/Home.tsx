@@ -45,7 +45,8 @@ const STATS_CACHE_TTL = 60_000;
 export const HomePage: React.FC = () => {
   const { user } = useAuthStore();
   const userId = user?.id || '';
-  const initialCache = userId ? statsCache.get(userId) : undefined;
+  const cacheScope = JSON.stringify([user?.id, user?.role, user?.user_type, user?.library_owner_id, user?.category_scopes, user?.permissions]);
+  const initialCache = userId ? statsCache.get(cacheScope) : undefined;
   const [stats, setStats] = useState<Stats>(initialCache?.value || defaultStats);
   const [loading, setLoading] = useState(!initialCache);
   const canManageQuestions = hasPermission(user, 'question_view');
@@ -53,7 +54,7 @@ export const HomePage: React.FC = () => {
   useEffect(() => {
     if (!userId) return;
 
-    const cached = statsCache.get(userId);
+    const cached = statsCache.get(cacheScope);
     if (cached) {
       setStats(cached.value);
       setLoading(false);
@@ -67,7 +68,8 @@ export const HomePage: React.FC = () => {
       .then((response) => {
         if (!active) return;
         const nextStats = { ...defaultStats, ...response.data };
-        statsCache.set(userId, { value: nextStats, updatedAt: Date.now() });
+        if (statsCache.size >= 20) statsCache.delete(statsCache.keys().next().value!);
+        statsCache.set(cacheScope, { value: nextStats, updatedAt: Date.now() });
         setStats(nextStats);
       })
       .catch((error) => {
@@ -80,7 +82,7 @@ export const HomePage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, cacheScope]);
 
   const now = new Date();
   const hour = now.getHours();

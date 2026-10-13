@@ -34,7 +34,7 @@
 | 学习复习 | 分页背题与答题、全范围随机/题号跳转、浏览进度和收藏 |
 | 用户权限 | 管理员、独立题库、集成题库、分类范围授权、细粒度功能权限、可配置登录有效期和一直有效 |
 | 数据管理 | MariaDB / MySQL、SQLite、完整备份恢复、数据库迁移和一致性校验 |
-| 多端体验 | 响应式桌面与手机布局、PWA 应用壳、浏览器本地草稿 |
+| 多端体验 | 响应式桌面与手机布局、PWA 应用壳、独立安卓 App、浏览器本机草稿与 App 背题 / AI 助手 |
 
 所有 AI 生成内容都应由使用者确认后再写入正式题库。系统不会把 AI 输出视为无需审核的事实来源。
 
@@ -100,7 +100,7 @@ API Key 只在凭据管理界面录入，服务端使用 AES-256-GCM 加密保�
 
 ## 本地开发
 
-要求 Node.js 22+、npm 10+。
+建议使用 Node.js 22 LTS 的 22.13.0 或更新版本、npm 10+。Web 构建至少需要 22.12.0，App 的 React Native 依赖至少需要 22.13.0。
 
 ```bash
 # API
@@ -135,6 +135,7 @@ tech-growth-hub/
 │   ├── public/
 │   ├── src/
 │   └── e2e/                 # Playwright 浏览器测试
+├── mobile/                  # Expo + React Native 安卓 App
 ├── docs/                    # 使用、AI、部署、运维与开发文档
 ├── compose.yaml             # 源码构建部署
 └── compose.release.yaml     # 发布镜像部署
@@ -145,6 +146,7 @@ tech-growth-hub/
 | 层 | 技术 |
 | --- | --- |
 | Web | React 18、TypeScript、Vite、React Router、Zustand、Tailwind CSS、IndexedDB、Service Worker |
+| App | Expo SDK 57、React Native、React Navigation、SecureStore |
 | API | Node.js 22、Express、TypeScript、Zod、Helmet、JWT、rate-limiter-flexible |
 | 数据 | MariaDB / MySQL、SQLite |
 | 测试 | Node Test Runner、Supertest、ESLint、TypeScript、Playwright |
@@ -178,14 +180,26 @@ npm run lint
 npm run e2e
 npm audit --omit=dev
 
+cd ../mobile
+npm run typecheck
+npm run lint
+npm test
+npm run test:scripts
+npm run test:integration
+
 cd ..
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 docker compose config --quiet
+docker compose -f compose.release.yaml config --quiet
 ```
+
+脚本回归需要 Python 3.11+；App 合约测试需要先安装 API 依赖。Android JavaScript 导出不能替代键盘、系统分享和返回键的真机验证。API / Web 的生产依赖与 Web / Expo 的构建依赖应分别审计。
 
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
+| [安卓 App](./docs/android-app.md) | 手机布局、连接服务、开发与 APK 打包 |
 | [用户手册](./docs/user-guide.md) | 页面、题库、学习、AI 与管理操作 |
 | [AI 指南](./docs/ai.md) | 凭据、模型、生成能力、检查机制与排障 |
 | [部署说明](./docs/deployment.md) | Docker、环境变量、数据库与生产部署 |
@@ -193,8 +207,7 @@ docker compose config --quiet
 | [运维手册](./docs/operations.md) | 健康检查、日志、备份、恢复和故障定位 |
 | [开发指南](./docs/development.md) | 项目结构、开发环境、测试和编码约定 |
 | [权限说明](./docs/permissions.md) | 用户类型、分类范围和权限模型 |
-| [安全审查](./docs/security-audit.md) | 安全边界、验证结果和剩余风险 |
-| [功能、代码与文档检查](./docs/project-audit-2026-10-08.md) | 本次检查结果、修复、测试范围和功能建议 |
+| [项目产物清理](./docs/project-maintenance.md) | 清理预览、APK 保留规则与维护脚本验证 |
 | [贡献指南](./CONTRIBUTING.md) | Issue、分支、测试和 PR 约定 |
 | [更新日志](./CHANGELOG.md) | 版本变更记录 |
 

@@ -57,7 +57,7 @@ npm run dev
 
 ### 3. Docker 方式
 
-先按 [README 的快速开始](./README.md#快速开始) 准备根目录 `.env`，再启动：
+先按 [README 的快速部署](./README.md#快速部署) 准备根目录 `.env`，再启动：
 
 ```bash
 docker compose up -d --build

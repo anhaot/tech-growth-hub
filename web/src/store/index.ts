@@ -14,17 +14,26 @@ interface AuthState {
 const TOKEN_STORAGE_KEY = 'token';
 const AUTH_STORAGE_KEY = 'auth-storage';
 
-function canUseWebStorage(storage: 'localStorage' | 'sessionStorage') {
-  return typeof window !== 'undefined' && typeof window[storage] !== 'undefined';
+function getWebStorage(storage: 'localStorage' | 'sessionStorage') {
+  try { return typeof window !== 'undefined' ? window[storage] : null; }
+  catch { return null; }
+}
+
+function readStorage(storage: 'localStorage' | 'sessionStorage', key: string): string | null {
+  try { return getWebStorage(storage)?.getItem(key) || null; } catch { return null; }
+}
+
+function writeStorage(storage: 'localStorage' | 'sessionStorage', key: string, value?: string) {
+  try {
+    const target = getWebStorage(storage);
+    if (value === undefined) target?.removeItem(key);
+    else target?.setItem(key, value);
+  } catch { /* Cookie authentication still works when browser storage is unavailable. */ }
 }
 
 function getLegacyAuthSnapshot() {
-  if (!canUseWebStorage('localStorage')) {
-    return null;
-  }
-
   try {
-    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    const raw = readStorage('localStorage', AUTH_STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -32,50 +41,40 @@ function getLegacyAuthSnapshot() {
 }
 
 function migrateLegacyAuthState() {
-  if (!canUseWebStorage('sessionStorage')) {
+  if (!getWebStorage('sessionStorage')) {
     return;
   }
 
-  const session = window.sessionStorage;
-  const local = canUseWebStorage('localStorage') ? window.localStorage : null;
-  if (!local || session.getItem(AUTH_STORAGE_KEY)) {
+  if (!getWebStorage('localStorage') || readStorage('sessionStorage', AUTH_STORAGE_KEY)) {
     return;
   }
 
   const legacyAuth = getLegacyAuthSnapshot();
 
   if (legacyAuth) {
-    session.setItem(AUTH_STORAGE_KEY, JSON.stringify(legacyAuth));
+    writeStorage('sessionStorage', AUTH_STORAGE_KEY, JSON.stringify(legacyAuth));
   }
 
-  session.removeItem(TOKEN_STORAGE_KEY);
-  local.removeItem(TOKEN_STORAGE_KEY);
+  writeStorage('sessionStorage', TOKEN_STORAGE_KEY);
+  writeStorage('localStorage', TOKEN_STORAGE_KEY);
 }
 
 function clearLegacyAuthState() {
-  if (canUseWebStorage('localStorage')) {
-    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    window.localStorage.removeItem('user');
-  }
+  writeStorage('localStorage', TOKEN_STORAGE_KEY);
+  writeStorage('localStorage', AUTH_STORAGE_KEY);
+  writeStorage('localStorage', 'user');
 }
 
 export function clearStoredAuthState() {
-  if (canUseWebStorage('sessionStorage')) {
-    window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  }
+  writeStorage('sessionStorage', TOKEN_STORAGE_KEY);
+  writeStorage('sessionStorage', AUTH_STORAGE_KEY);
 
   clearLegacyAuthState();
 }
 
 export function getStoredToken(): string | null {
-  if (canUseWebStorage('sessionStorage')) {
-    window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-  }
-  if (canUseWebStorage('localStorage')) {
-    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-  }
+  writeStorage('sessionStorage', TOKEN_STORAGE_KEY);
+  writeStorage('localStorage', TOKEN_STORAGE_KEY);
   return null;
 }
 
@@ -88,9 +87,7 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isAuthenticated: false,
       setAuth: (user) => {
-        if (canUseWebStorage('sessionStorage')) {
-          window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-        }
+        writeStorage('sessionStorage', TOKEN_STORAGE_KEY);
         clearLegacyAuthState();
         set({ user, token: null, isAuthenticated: true });
       },
@@ -105,7 +102,11 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: AUTH_STORAGE_KEY,
-      storage: createJSONStorage(() => sessionStorage),
+      storage: createJSONStorage(() => ({
+        getItem: (name) => readStorage('sessionStorage', name),
+        setItem: (name, value) => writeStorage('sessionStorage', name, value),
+        removeItem: (name) => writeStorage('sessionStorage', name),
+      })),
       partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
     }
   )

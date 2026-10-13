@@ -58,6 +58,8 @@ MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYS
 
 ## 3. 本地开发
 
+建议使用 Node.js 22 LTS 的 22.13.0 或更新版本及 npm 10+；Web 当前 Vite 至少需要 22.12.0，App 当前 React Native 至少需要 22.13.0。CI 使用 Node 22 的当前补丁版。
+
 ### 安装依赖
 
 后端：
@@ -118,7 +120,7 @@ npm run test
 - `build`：TypeScript 编译
 - `lint`：ESLint 检查
 - `typecheck`：只做类型检查
-- `test`：运行后端安全回归测试
+- `test`：运行后端安全及 AI 完成状态回归测试
 
 ### 前端
 
@@ -149,6 +151,8 @@ npm run e2e:headed
 文件：
 
 - [security-regression.test.ts](../api/tests/security-regression.test.ts)
+- [ai-completion.test.ts](../api/tests/ai-completion.test.ts)
+- [mysql-backup-regression.test.ts](../api/tests/mysql-backup-regression.test.ts)（独立数据库，使用 `npm run test:mysql`）
 
 目前覆盖重点：
 
@@ -179,6 +183,8 @@ npm run e2e:headed
 - [mobile-layout.spec.ts](../web/e2e/mobile-layout.spec.ts)
 - [mobile-offline.spec.ts](../web/e2e/mobile-offline.spec.ts)
 - [study.spec.ts](../web/e2e/study.spec.ts)
+- [question-actions.spec.ts](../web/e2e/question-actions.spec.ts)
+- [frontend-regressions.spec.ts](../web/e2e/frontend-regressions.spec.ts)
 
 目前覆盖重点：
 
@@ -199,6 +205,24 @@ npm run e2e:headed
 cd api && npm run build
 cd ../web && npm run build
 ```
+
+### 安卓 App 与维护脚本
+
+App 位于 `mobile/`，使用独立的依赖与 TypeScript 配置。客户端测试覆盖请求、会话存储、离线题库、阅读与 AI 导出；`test:integration` 使用独立 SQLite 验证真实 API 合约。APK 校验和清理脚本测试需要 Python 3.11+，使用临时项目与模拟工具，不清理工作区或构建原生 APK。
+
+```bash
+cd mobile
+npm run typecheck
+npm run lint
+npm test
+npm run test:scripts
+npm run test:integration
+npm run export:android
+cd ..
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+```
+
+详细构建条件与设备验证边界见 [安卓 App](./android-app.md)。
 
 ---
 
@@ -394,7 +418,7 @@ cd web && npm run e2e
 
 列表与学习按 `created_at DESC, id DESC` 排序。Web 学习保留当前 100 道，全库后台扫描每批读 1000 道且不设题目总量上限。查重候选索引与穷举评分对照验证，最多保留 10,000 个最高分结果，匹配总数单独统计。任务为进程内状态，部署多个实例时需要会话固定或改用持久队列。
 
-新增 API 回归覆盖版本冲突、回退、分类历史权限、旧备份、合并故障回滚、6005 道题跨页/全库扫描、万题密集重复、学习进度和持久 AI 开关。人工界面检查使用隔离题库；结果见[检查报告](project-audit-2026-10-08.md)。
+API 回归覆盖版本冲突、回退、分类历史权限、旧备份、合并故障回滚、6005 道题跨页/全库扫描、万题密集重复、学习进度和持久 AI 开关。人工界面验证应使用隔离题库。
 
 
 ### 导入预览接口

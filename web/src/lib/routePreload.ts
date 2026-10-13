@@ -16,5 +16,5 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
 };
 
 export const preloadRoute = (path: string) => {
-  void routeLoaders[path]?.();
+  void routeLoaders[path]?.().catch(() => undefined);
 };

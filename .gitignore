@@ -1,14 +1,16 @@
 node_modules
 dist
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+!.env.*.example
 tech-growth-hub.env
 data
 uploads
 *.log
 .agents
 .codex
+.aws/
 web/playwright-report
 web/test-results
 web/dist
@@ -16,3 +18,18 @@ api/dist
 .playwright-cli
 playwright-cli.json
 output
+__pycache__/
+*.pyc
+*.apk
+*.aab
+
+# Local deployment presets and internal review records.
+/compose.aliyun.yaml
+/tech-growth-hub.env.example
+/docs/deployment-20*.md
+/docs/deployment-aliyun.md
+/docs/*audit*.md
+/docs/images/app-*.png
+/api/src/scripts/applyQuestionAuditFixes.mjs
+/api/src/scripts/applyExperienceAnswerFixes.ts
+/api/src/scripts/experienceAnswers.ts

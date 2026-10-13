@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { aiApi, categoryApi, questionApi } from '@/api';
-import { useAuthStore } from '@/store';
+import { useAIStore, useAuthStore } from '@/store';
+import { hasPermission } from '@/lib/permissions';
 import { Category, InterviewDraft } from '@/types';
 import {
   getInterviewDrafts,
   removeInterviewDrafts,
   saveInterviewDraft,
+  saveInterviewDrafts,
 } from '@/lib/offlineStorage';
 import { parseQuestionTags } from '@/lib/questionTags';
 import { toast } from 'react-hot-toast';
@@ -14,7 +16,9 @@ import { BrainCircuit, Check, CloudOff, Plus, Sparkles, Trash2, Upload } from 'l
 function newDraft(content: string): InterviewDraft {
   const now = new Date().toISOString();
   return {
-    id: crypto.randomUUID(),
+    id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Array.from(
+      crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')
+    ).join(''),
     content,
     answer: '',
     explanation: '',
@@ -34,6 +38,9 @@ function parseBulkQuestions(raw: string): string[] {
 
 export const InterviewCapturePage: React.FC = () => {
   const { user } = useAuthStore();
+  const aiEnabled = useAIStore((state) => state.enabled);
+  const canGenerate = aiEnabled && hasPermission(user, 'ai_polish');
+  const canImport = hasPermission(user, 'question_create');
   const [bulkText, setBulkText] = useState('');
   const [drafts, setDrafts] = useState<InterviewDraft[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -42,18 +49,27 @@ export const InterviewCapturePage: React.FC = () => {
   const [generating, setGenerating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const busy = generating || importing || deleting || saving;
   const [online, setOnline] = useState(navigator.onLine);
 
   useEffect(() => {
     if (!user) return;
+    let active = true;
+    setDrafts([]);
+    setSelected(new Set());
     getInterviewDrafts(user.id)
       .then((items) => {
+        if (!active) return;
         setDrafts(items);
         setSelected(new Set(items.map((item) => item.id)));
       })
-      .catch((error) => toast.error((error as Error).message));
-    categoryApi.getAll().then((response) => setCategories(response.data)).catch(() => undefined);
-  }, [user]);
+      .catch((error) => { if (active) toast.error((error as Error).message); });
+    if (hasPermission(user, 'category_view')) {
+      categoryApi.getAll().then((response) => { if (active) setCategories(response.data); }).catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, [user?.id]);
 
   useEffect(() => {
     const handleOnline = () => setOnline(true);
@@ -71,18 +87,25 @@ export const InterviewCapturePage: React.FC = () => {
   const allSelected = drafts.length > 0 && selectedDrafts.length === drafts.length;
 
   const addQuestions = async () => {
-    if (!user) return;
+    if (!user || busy) return;
     const questions = parseBulkQuestions(bulkText);
     if (questions.length === 0) {
       toast.error('请至少填写一道题');
       return;
     }
     const items = questions.map(newDraft);
-    await Promise.all(items.map((item) => saveInterviewDraft(user.id, item)));
-    setDrafts((current) => [...items, ...current]);
-    setSelected((current) => new Set([...current, ...items.map((item) => item.id)]));
-    setBulkText('');
-    toast.success(`已保存 ${items.length} 道草稿，尚未写入正式题库`);
+    setSaving(true);
+    try {
+      await saveInterviewDrafts(user.id, items);
+      setDrafts((current) => [...items, ...current]);
+      setSelected((current) => new Set([...current, ...items.map((item) => item.id)]));
+      setBulkText('');
+      toast.success(`已保存 ${items.length} 道草稿，尚未写入正式题库`);
+    } catch (error) {
+      toast.error((error as Error).message || '保存草稿失败');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const updateDraft = (id: string, patch: Partial<InterviewDraft>) => {
@@ -94,19 +117,30 @@ export const InterviewCapturePage: React.FC = () => {
   const persistDraft = async (id: string) => {
     if (!user) return;
     const draft = drafts.find((item) => item.id === id);
-    if (draft) await saveInterviewDraft(user.id, draft);
+    if (draft) {
+      try { await saveInterviewDraft(user.id, draft); }
+      catch (error) { toast.error((error as Error).message || '保存草稿失败'); }
+    }
   };
 
   const deleteDraft = async (id: string) => {
+    if (busy || !user) return;
     if (!confirm('确定要删除这道草稿吗？删除后无法恢复，但不会影响已经入库的题目。')) return;
-    await removeInterviewDrafts([id]);
-    setDrafts((current) => current.filter((draft) => draft.id !== id));
-    setSelected((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
-    toast.success('草稿已删除');
+    setDeleting(true);
+    try {
+      await removeInterviewDrafts(user.id, [id]);
+      setDrafts((current) => current.filter((draft) => draft.id !== id));
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+      toast.success('草稿已删除');
+    } catch (error) {
+      toast.error((error as Error).message || '删除草稿失败');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const toggleAllDrafts = () => {
@@ -114,6 +148,7 @@ export const InterviewCapturePage: React.FC = () => {
   };
 
   const deleteSelectedDrafts = async () => {
+    if (busy || !user) return;
     const ids = selectedDrafts.map((draft) => draft.id);
     if (ids.length === 0) {
       toast.error('请先选择要删除的草稿');
@@ -123,7 +158,7 @@ export const InterviewCapturePage: React.FC = () => {
 
     setDeleting(true);
     try {
-      await removeInterviewDrafts(ids);
+      await removeInterviewDrafts(user.id, ids);
       const idSet = new Set(ids);
       setDrafts((current) => current.filter((draft) => !idSet.has(draft.id)));
       setSelected((current) => {
@@ -140,6 +175,7 @@ export const InterviewCapturePage: React.FC = () => {
   };
 
   const generateAnswers = async () => {
+    if (busy || !canGenerate) return;
     if (!user || selectedDrafts.length === 0) {
       toast.error('请先选择草稿');
       return;
@@ -173,9 +209,10 @@ export const InterviewCapturePage: React.FC = () => {
             updatedAt: new Date().toISOString(),
           } : draft;
         });
+        const generatedDrafts = nextDrafts.filter((draft) => draftMap.has(draft.id));
+        await saveInterviewDrafts(user.id, generatedDrafts);
+        setDrafts(nextDrafts);
       }
-      setDrafts(nextDrafts);
-      await Promise.all(nextDrafts.filter((draft) => selected.has(draft.id)).map((draft) => saveInterviewDraft(user.id, draft)));
       toast.success(`已为 ${selectedDrafts.length} 道题生成答案，请检查后再入库`);
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'AI 生成答案失败');
@@ -185,6 +222,8 @@ export const InterviewCapturePage: React.FC = () => {
   };
 
   const importToLibrary = async () => {
+    if (busy || !canImport || !user) return;
+    if (!online) { toast.error('当前离线，联网后再确认入库'); return; }
     const ready = selectedDrafts.filter((draft) => draft.content.trim() && draft.answer.trim());
     if (ready.length === 0) {
       toast.error('所选草稿还没有完整答案');
@@ -205,17 +244,16 @@ export const InterviewCapturePage: React.FC = () => {
         });
         importedIds.push(draft.id);
       }
-      await removeInterviewDrafts(importedIds);
-      setDrafts((current) => current.filter((draft) => !importedIds.includes(draft.id)));
-      setSelected(new Set());
       toast.success(`已确认并导入 ${importedIds.length} 道题`);
     } catch (error: any) {
-      if (importedIds.length > 0) {
-        await removeInterviewDrafts(importedIds);
-        setDrafts((current) => current.filter((draft) => !importedIds.includes(draft.id)));
-      }
       toast.error(error.response?.data?.error || `导入中断，已成功 ${importedIds.length} 道`);
     } finally {
+      if (importedIds.length > 0) {
+        setDrafts((current) => current.filter((draft) => !importedIds.includes(draft.id)));
+        setSelected((current) => new Set([...current].filter((id) => !importedIds.includes(id))));
+        try { await removeInterviewDrafts(user.id, importedIds); }
+        catch { toast.error('题目已入库，但本机草稿清理失败，请勿重复入库'); }
+      }
       setImporting(false);
     }
   };
@@ -239,13 +277,14 @@ export const InterviewCapturePage: React.FC = () => {
         <label className="mb-2 block text-sm font-semibold text-slate-800">批量记录题目</label>
         <textarea
           value={bulkText}
+          disabled={busy}
           onChange={(event) => setBulkText(event.target.value)}
           className="min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 lg:min-h-36 lg:px-4 lg:py-3"
           placeholder={'每行一道题，例如：\nLinux 负载高如何排查？\nKubernetes Pod 一直 Pending 怎么处理？\nRedis 缓存雪崩有哪些治理方式？'}
         />
         <div className="mt-2.5 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
           <p className="text-xs text-slate-500">一行一道；需要多行题干时，用空行分隔每道题。</p>
-          <button onClick={addQuestions} className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 sm:min-h-11 sm:w-auto">
+          <button disabled={busy} onClick={addQuestions} className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50 sm:min-h-11 sm:w-auto">
             <Plus size={18} /> 保存到草稿箱
           </button>
         </div>
@@ -260,7 +299,7 @@ export const InterviewCapturePage: React.FC = () => {
           <div className="mobile-scroll-row mt-3 lg:mt-0 lg:flex lg:flex-wrap lg:overflow-visible">
             <button
               type="button"
-              disabled={drafts.length === 0 || deleting}
+              disabled={drafts.length === 0 || busy}
               onClick={toggleAllDrafts}
               className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 lg:min-h-11 lg:gap-2 lg:px-4 lg:text-sm"
             >
@@ -268,22 +307,22 @@ export const InterviewCapturePage: React.FC = () => {
             </button>
             <button
               type="button"
-              disabled={selectedDrafts.length === 0 || deleting || generating || importing}
+              disabled={selectedDrafts.length === 0 || busy}
               onClick={deleteSelectedDrafts}
               className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 lg:min-h-11 lg:gap-2 lg:px-4 lg:text-sm"
             >
               <Trash2 size={17} /> {deleting ? '删除中…' : `批量删除 ${selectedDrafts.length}`}
             </button>
-            <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className="select-field min-h-10 shrink-0 px-3 pr-9 text-sm lg:min-h-11">
+            <select disabled={busy} value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className="select-field min-h-10 shrink-0 px-3 pr-9 text-sm lg:min-h-11">
               <option value="">不指定分类</option>
               {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
             </select>
-            <button disabled={generating || selectedDrafts.length === 0} onClick={generateAnswers} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50 lg:min-h-11 lg:gap-2 lg:px-4 lg:text-sm">
+            {canGenerate && <button disabled={busy || !online || selectedDrafts.length === 0} onClick={generateAnswers} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50 lg:min-h-11 lg:gap-2 lg:px-4 lg:text-sm">
               <Sparkles size={17} /> {generating ? 'AI 生成中…' : 'AI 批量生成答案'}
-            </button>
-            <button disabled={importing || readyCount === 0} onClick={importToLibrary} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50 lg:min-h-11 lg:gap-2 lg:px-4 lg:text-sm">
+            </button>}
+            {canImport && <button disabled={busy || !online || readyCount === 0} onClick={importToLibrary} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50 lg:min-h-11 lg:gap-2 lg:px-4 lg:text-sm">
               <Upload size={17} /> {importing ? '导入中…' : `确认入库 ${readyCount}`}
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -293,15 +332,16 @@ export const InterviewCapturePage: React.FC = () => {
           <article key={draft.id} className="rounded-xl border border-slate-200 bg-white p-3 lg:rounded-2xl lg:p-5 lg:shadow-sm">
             <div className="mb-2 flex items-center justify-between gap-3 lg:mb-3">
               <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700 lg:min-h-11 lg:gap-3">
-                <input type="checkbox" checked={selected.has(draft.id)} onChange={(event) => setSelected((current) => {
+                <input disabled={busy} type="checkbox" checked={selected.has(draft.id)} onChange={(event) => setSelected((current) => {
                   const next = new Set(current);
-                  event.target.checked ? next.add(draft.id) : next.delete(draft.id);
+                  if (event.target.checked) next.add(draft.id);
+                  else next.delete(draft.id);
                   return next;
                 })} className="h-5 w-5 rounded" /> 第 {index + 1} 题
               </label>
-              <button aria-label="删除草稿" onClick={() => deleteDraft(draft.id)} className="min-h-10 min-w-10 rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 lg:min-h-11 lg:min-w-11"><Trash2 className="mx-auto" size={18} /></button>
+              <button disabled={busy} aria-label="删除草稿" onClick={() => deleteDraft(draft.id)} className="min-h-10 min-w-10 rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 lg:min-h-11 lg:min-w-11"><Trash2 className="mx-auto" size={18} /></button>
             </div>
-            <div className="space-y-3">
+            <fieldset disabled={busy} className="space-y-3">
               <textarea value={draft.content} onChange={(event) => updateDraft(draft.id, { content: event.target.value })} onBlur={() => persistDraft(draft.id)} rows={3} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-base outline-none focus:border-violet-500" aria-label={`第 ${index + 1} 题题目`} />
               <textarea value={draft.answer} onChange={(event) => updateDraft(draft.id, { answer: event.target.value })} onBlur={() => persistDraft(draft.id)} rows={5} className="w-full rounded-xl border border-slate-200 bg-emerald-50/40 px-3 py-2 text-base outline-none focus:border-emerald-500" placeholder="答案可留空，稍后使用 AI 生成" aria-label={`第 ${index + 1} 题答案`} />
               <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
@@ -310,7 +350,7 @@ export const InterviewCapturePage: React.FC = () => {
                 </select>
                 <input value={draft.tags.join(', ')} onChange={(event) => updateDraft(draft.id, { tags: parseQuestionTags(event.target.value) })} onBlur={() => persistDraft(draft.id)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-base outline-none focus:border-violet-500" placeholder="标签（逗号分隔）" />
               </div>
-            </div>
+            </fieldset>
           </article>
         ))}
       </section>

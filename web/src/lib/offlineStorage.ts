@@ -1,7 +1,7 @@
 import { InterviewDraft } from '@/types';
 
 const DB_NAME = 'tech-growth-hub-offline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -12,28 +12,30 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = window.indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains('interviewDrafts')) {
-        const store = database.createObjectStore('interviewDrafts', { keyPath: 'id' });
+      const createStore = () => {
+        const store = database.createObjectStore('interviewDrafts', { keyPath: ['userId', 'id'] });
         store.createIndex('userId', 'userId', { unique: false });
+        return store;
+      };
+      if (!database.objectStoreNames.contains('interviewDrafts')) {
+        createStore();
+      } else if (request.transaction) {
+        const existing = request.transaction.objectStore('interviewDrafts');
+        if (existing.keyPath === 'id') {
+          const records = existing.getAll();
+          records.onsuccess = () => {
+            database.deleteObjectStore('interviewDrafts');
+            const store = createStore();
+            records.result.forEach((draft) => store.put(draft));
+          };
+        }
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
     request.onerror = () => reject(request.error || new Error('离线数据库打开失败'));
-  });
-}
-
-async function runRequest<T>(storeName: string, mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const database = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(storeName, mode);
-    const request = operation(transaction.objectStore(storeName));
-    let result: T;
-    request.onsuccess = () => { result = request.result; };
-    const fail = () => { database.close(); reject(transaction.error || request.error || new Error('离线事务失败')); };
-    request.onerror = fail;
-    transaction.onabort = fail;
-    transaction.onerror = fail;
-    transaction.oncomplete = () => { database.close(); resolve(result); };
   });
 }
 
@@ -53,16 +55,29 @@ export async function getInterviewDrafts(userId: string): Promise<InterviewDraft
 }
 
 export async function saveInterviewDraft(userId: string, draft: InterviewDraft): Promise<void> {
-  await runRequest('interviewDrafts', 'readwrite', (store) => store.put({ ...draft, userId }));
+  await saveInterviewDrafts(userId, [draft]);
 }
 
-export async function removeInterviewDrafts(ids: string[]): Promise<void> {
+export async function saveInterviewDrafts(userId: string, drafts: InterviewDraft[]): Promise<void> {
+  if (drafts.length === 0) return;
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction('interviewDrafts', 'readwrite');
+    const store = transaction.objectStore('interviewDrafts');
+    drafts.forEach((draft) => store.put({ ...draft, userId }));
+    transaction.oncomplete = () => { database.close(); resolve(); };
+    const fail = () => { database.close(); reject(transaction.error || new Error('保存面试草稿失败')); };
+    transaction.onerror = fail; transaction.onabort = fail;
+  });
+}
+
+export async function removeInterviewDrafts(userId: string, ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction('interviewDrafts', 'readwrite');
     const store = transaction.objectStore('interviewDrafts');
-    ids.forEach((id) => store.delete(id));
+    ids.forEach((id) => store.delete([userId, id]));
     transaction.oncomplete = () => { database.close(); resolve(); };
     const fail = () => { database.close(); reject(transaction.error || new Error('删除面试草稿失败')); };
     transaction.onerror = fail; transaction.onabort = fail;

@@ -20,7 +20,7 @@ export function parseTagAliasMap(rawValue: string | null | undefined): TagAliasM
       return {};
     }
 
-    const aliases: TagAliasMap = {};
+    const aliases: TagAliasMap = Object.create(null);
     for (const [alias, target] of Object.entries(parsed)) {
       const normalizedAlias = normalizeTagName(alias);
       const normalizedTarget = normalizeTagName(String(target || ''));
@@ -40,7 +40,7 @@ export function resolveTagAlias(tag: string, aliases: TagAliasMap = {}): string 
   let current = normalizeTagName(tag);
   const visited = new Set<string>();
 
-  while (aliases[current] && !visited.has(current)) {
+  while (Object.hasOwn(aliases, current) && aliases[current] && !visited.has(current)) {
     visited.add(current);
     current = normalizeTagName(aliases[current]);
   }

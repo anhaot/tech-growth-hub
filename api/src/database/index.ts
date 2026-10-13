@@ -28,6 +28,7 @@ import path from 'path';
 type SQLiteDB = Database.Database;
 
 type MySQLConnection = mysql.Pool;
+type SQLStatement = { sql: string; params: unknown[] };
 
 function getChangedRows(result: unknown): number {
   if (!result || typeof result !== 'object') return 0;
@@ -525,9 +526,9 @@ export class DatabaseManager {
       CREATE TABLE IF NOT EXISTS questions (
         id VARCHAR(36) PRIMARY KEY,
         title VARCHAR(500) NOT NULL,
-        content TEXT NOT NULL,
-        answer TEXT NOT NULL,
-        explanation TEXT,
+        content LONGTEXT NOT NULL,
+        answer LONGTEXT NOT NULL,
+        explanation LONGTEXT,
         difficulty ENUM('easy', 'medium', 'hard') DEFAULT 'medium',
         category_id VARCHAR(36),
         user_id VARCHAR(36) NOT NULL,
@@ -651,11 +652,22 @@ export class DatabaseManager {
 
     await this.mysqlPool.execute(`
       CREATE TABLE IF NOT EXISTS system_settings (
-        \`key\` VARCHAR(50) PRIMARY KEY,
+        \`key\` VARCHAR(100) PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
+
+    const [settingColumns] = await this.mysqlPool.execute<mysql.RowDataPacket[]>("SHOW COLUMNS FROM system_settings LIKE 'key'");
+    const keyLength = Number(String(settingColumns[0]?.Type).match(/^varchar\((\d+)\)/i)?.[1] || 0);
+    if (keyLength < 100) {
+      await this.mysqlPool.execute('ALTER TABLE system_settings MODIFY COLUMN `key` VARCHAR(100) NOT NULL');
+    }
+    const [questionColumns] = await this.mysqlPool.execute<mysql.RowDataPacket[]>('SHOW COLUMNS FROM questions');
+    const contentChanges = ['content', 'answer', 'explanation']
+      .filter((name) => questionColumns.find((column) => column.Field === name)?.Type !== 'longtext')
+      .map((name) => `MODIFY COLUMN ${name} LONGTEXT${name === 'explanation' ? ' NULL' : ' NOT NULL'}`);
+    if (contentChanges.length) await this.mysqlPool.execute(`ALTER TABLE questions ${contentChanges.join(', ')}`);
 
     await this.mysqlPool.execute(`
       INSERT IGNORE INTO system_settings (\`key\`, value) VALUES ('allow_register', 'true')
@@ -762,6 +774,46 @@ export class DatabaseManager {
       return normalizeMySQLRows<T>(rows);
     }
     throw new Error('Database not connected');
+  }
+
+  private async runTransaction(statements: SQLStatement[], lockUserId?: string, requiredRow?: SQLStatement,
+    administratorChange?: { id: string; demote: boolean }): Promise<unknown[]> {
+    const ensureAdministratorRemains = (administrators: Array<{ id: string }>) => {
+      if (administratorChange?.demote && administrators.length === 1 && administrators[0].id === administratorChange.id) {
+        throw new Error('LAST_ADMIN');
+      }
+    };
+    if (this.sqliteDb) {
+      const database = this.sqliteDb;
+      return database.transaction(() => {
+        if (administratorChange) ensureAdministratorRemains(database.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id").all() as Array<{ id: string }>);
+        if (requiredRow && !database.prepare(requiredRow.sql).get(...requiredRow.params)) throw new Error('AI_CONFIG_NOT_FOUND');
+        return statements.map((statement) => database.prepare(statement.sql).run(...statement.params));
+      })();
+    }
+    if (!this.mysqlPool) throw new Error('Database not connected');
+    const connection = await this.mysqlPool.getConnection();
+    try {
+      await connection.beginTransaction();
+      if (administratorChange) {
+        // Serialize membership changes against the same locked administrator set.
+        const [administrators] = await connection.execute<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin' ORDER BY id FOR UPDATE");
+        ensureAdministratorRemains(administrators as Array<{ id: string }>);
+      }
+      if (lockUserId) await connection.execute('SELECT id FROM users WHERE id = ? FOR UPDATE', [lockUserId]);
+      if (requiredRow) {
+        const [rows] = await connection.execute<mysql.RowDataPacket[]>(requiredRow.sql, normalizeMySQLParams(requiredRow.params, requiredRow.sql));
+        if (!rows.length) throw new Error('AI_CONFIG_NOT_FOUND');
+      }
+      const results: unknown[] = [];
+      for (const statement of statements) {
+        const [result] = await connection.execute(statement.sql, normalizeMySQLParams(statement.params, statement.sql));
+        results.push(result);
+      }
+      await connection.commit();
+      return results;
+    } catch (error) { await connection.rollback(); throw error; }
+    finally { connection.release(); }
   }
 
   private normalizePermissions(role: User['role'], permissions?: string | Partial<UserPermissions> | null): UserPermissions {
@@ -903,10 +955,16 @@ export class DatabaseManager {
     values.push(new Date().toISOString());
     values.push(id);
 
-    await this.run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
+    const statements: SQLStatement[] = [{ sql: `UPDATE users SET ${fields.join(', ')} WHERE id = ?`, params: values }];
     if (data.password_hash !== undefined) {
-      await this.setSetting(`auth_legacy_revoked:${id}`, 'true');
+      statements.push({
+        sql: this.dbType === 'sqlite'
+          ? 'INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)'
+          : 'INSERT INTO system_settings (`key`, value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+        params: [`auth_legacy_revoked:${id}`, 'true', new Date().toISOString()],
+      });
     }
+    await this.runTransaction(statements, undefined, undefined, data.role !== undefined ? { id, demote: data.role !== 'admin' } : undefined);
     return this.getUserById(id);
   }
 
@@ -1298,6 +1356,14 @@ export class DatabaseManager {
     );
   }
 
+  async removeBookmarks(userId: string, mode: string, ids: string[]): Promise<number> {
+    const result = await this.run(
+      `UPDATE learning_progress SET is_bookmarked = 0 WHERE user_id = ? AND mode = ? AND is_bookmarked = 1 AND question_id IN (${ids.map(() => '?').join(',')})`,
+      [userId, mode, ...ids]
+    );
+    return getChangedRows(result);
+  }
+
   async getReviewState(userId: string, questionId: string): Promise<ReviewState | undefined> {
     return this.get<ReviewState>(
       'SELECT * FROM review_states WHERE user_id = ? AND question_id = ?',
@@ -1560,16 +1626,23 @@ export class DatabaseManager {
   }
 
   async createAIConfig(aiConfig: AIConfig): Promise<AIConfig> {
-    await this.run(
-      'UPDATE ai_configs SET is_active = 0 WHERE user_id = ?',
-      [aiConfig.user_id]
-    );
-    await this.run(
-      `INSERT INTO ai_configs (id, user_id, provider, display_name, base_url, api_key, model, is_active, is_custom, credential_id, created_at, updated_at)
+    const statements: SQLStatement[] = aiConfig.is_active
+      ? [{ sql: 'UPDATE ai_configs SET is_active = 0 WHERE user_id = ?', params: [aiConfig.user_id] }]
+      : [];
+    statements.push({
+      sql: `INSERT INTO ai_configs (id, user_id, provider, display_name, base_url, api_key, model, is_active, is_custom, credential_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [aiConfig.id, aiConfig.user_id, aiConfig.provider, aiConfig.display_name || null, aiConfig.base_url || null, encryptSecret(aiConfig.api_key), aiConfig.model, aiConfig.is_active ? 1 : 0, aiConfig.is_custom ? 1 : 0, aiConfig.credential_id || null, aiConfig.created_at, aiConfig.updated_at]
-    );
+      params: [aiConfig.id, aiConfig.user_id, aiConfig.provider, aiConfig.display_name || null, aiConfig.base_url || null, encryptSecret(aiConfig.api_key), aiConfig.model, aiConfig.is_active ? 1 : 0, aiConfig.is_custom ? 1 : 0, aiConfig.credential_id || null, aiConfig.created_at, aiConfig.updated_at],
+    });
+    await this.runTransaction(statements, aiConfig.user_id);
     return aiConfig;
+  }
+
+  async activateAIConfigForUser(id: string, userId: string): Promise<void> {
+    await this.runTransaction([{
+      sql: 'UPDATE ai_configs SET is_active = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE user_id = ?',
+      params: [id, userId],
+    }], userId, { sql: 'SELECT id FROM ai_configs WHERE id = ? AND user_id = ?', params: [id, userId] });
   }
 
   async getActiveAIConfig(userId: string): Promise<AIConfig | undefined> {
@@ -1652,7 +1725,15 @@ export class DatabaseManager {
     values.push(new Date().toISOString());
     values.push(id);
 
-    await this.run(`UPDATE ai_configs SET ${fields.join(', ')} WHERE id = ?`, values);
+    const statement = { sql: `UPDATE ai_configs SET ${fields.join(', ')} WHERE id = ?`, params: values };
+    if (data.is_active) {
+      const existing = await this.getAIConfigById(id);
+      if (!existing) return undefined;
+      await this.runTransaction([
+        { sql: 'UPDATE ai_configs SET is_active = 0 WHERE user_id = ?', params: [existing.user_id] },
+        statement,
+      ], existing.user_id, { sql: 'SELECT id FROM ai_configs WHERE id = ? AND user_id = ?', params: [id, existing.user_id] });
+    } else await this.run(statement.sql, statement.params);
     return this.getAIConfigById(id);
   }
 
@@ -1692,14 +1773,12 @@ export class DatabaseManager {
     const baseUrl = data.base_url ?? existing.base_url;
     const apiKey = data.api_key ?? existing.api_key;
     const updatedAt = new Date().toISOString();
-    await this.run(
-      'UPDATE ai_credentials SET name = ?, base_url = ?, api_key = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-      [name, baseUrl, encryptSecret(apiKey), updatedAt, id, userId]
-    );
-    await this.run(
-      'UPDATE ai_configs SET base_url = ?, api_key = ?, model_status = ?, last_checked_at = ?, last_check_error = ?, updated_at = ? WHERE credential_id = ? AND user_id = ?',
-      [baseUrl, encryptSecret(apiKey), 'unknown', '', '', updatedAt, id, userId]
-    );
+    await this.runTransaction([
+      { sql: 'UPDATE ai_credentials SET name = ?, base_url = ?, api_key = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+        params: [name, baseUrl, encryptSecret(apiKey), updatedAt, id, userId] },
+      { sql: 'UPDATE ai_configs SET base_url = ?, api_key = ?, model_status = ?, last_checked_at = ?, last_check_error = ?, updated_at = ? WHERE credential_id = ? AND user_id = ?',
+        params: [baseUrl, encryptSecret(apiKey), 'unknown', '', '', updatedAt, id, userId] },
+    ], userId);
     return this.getAICredentialByIdForUser(id, userId);
   }
 
@@ -1733,7 +1812,7 @@ export class DatabaseManager {
 
   async getAllUsers(): Promise<User[]> {
     const users = await this.all<Record<string, unknown>>(
-      'SELECT id, username, email, role, user_type, library_owner_id, category_scopes, permissions, created_at, updated_at FROM users ORDER BY created_at DESC'
+      'SELECT id, username, email, must_change_password, role, user_type, library_owner_id, category_scopes, permissions, created_at, updated_at FROM users ORDER BY created_at DESC'
     );
     return users
       .map((user) => this.normalizeUserRecord(user))
@@ -1762,15 +1841,13 @@ export class DatabaseManager {
   }
 
   async deleteUser(id: string): Promise<boolean> {
-    const user = await this.getUserById(id);
-    if (user?.role === 'admin') {
-      const adminCount = await this.get<{ count: number }>("SELECT COUNT(*) as count FROM users WHERE role = 'admin'");
-      if (adminCount && adminCount.count <= 1) {
-        return false;
-      }
+    try {
+      const [result] = await this.runTransaction([{ sql: 'DELETE FROM users WHERE id = ?', params: [id] }], undefined, undefined, { id, demote: true });
+      return getChangedRows(result) > 0;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'LAST_ADMIN') return false;
+      throw error;
     }
-    const result = await this.run('DELETE FROM users WHERE id = ?', [id]);
-    return getChangedRows(result) > 0;
   }
 
   async updateUserRole(id: string, role: string): Promise<User | undefined> {
@@ -1782,16 +1859,13 @@ export class DatabaseManager {
     const permissions = role === 'admin'
       ? ADMIN_PERMISSIONS
       : this.normalizePermissions('user', existingUser.role === 'user' ? existingUser.permissions : DEFAULT_USER_PERMISSIONS);
-    await this.run('UPDATE users SET role = ?, user_type = ?, library_owner_id = ?, category_scopes = ?, permissions = ?, updated_at = ? WHERE id = ?', [
-      role,
-      role === 'admin' ? 'independent' : existingUser.user_type,
-      role === 'admin' ? null : existingUser.library_owner_id,
-      role === 'admin' ? JSON.stringify([]) : JSON.stringify(existingUser.category_scopes || []),
-      JSON.stringify(permissions),
-      new Date().toISOString(),
-      id,
-    ]);
-    return this.getUserById(id);
+    return this.updateUser(id, {
+      role: role as User['role'],
+      user_type: role === 'admin' ? 'independent' : existingUser.user_type,
+      library_owner_id: role === 'admin' ? null : existingUser.library_owner_id,
+      category_scopes: role === 'admin' ? [] : existingUser.category_scopes,
+      permissions,
+    });
   }
 
   async getTableCounts(): Promise<DatabaseTableCountSummary> {
@@ -1891,27 +1965,7 @@ export class DatabaseManager {
     }));
     await this.bulkInsert('ai_configs', ['id', 'user_id', 'provider', 'display_name', 'base_url', 'api_key', 'model', 'is_active', 'is_custom', 'credential_id', 'model_status', 'last_checked_at', 'last_check_error', 'created_at', 'updated_at'], encryptedAIConfigs, collect);
     await this.bulkInsert('system_settings', ['key', 'value', 'updated_at'], dataset.system_settings || [], collect);
-    if (this.dbType === 'sqlite' && this.sqliteDb) {
-      const database = this.sqliteDb;
-      database.transaction(() => {
-        for (const statement of statements) database.prepare(statement.sql).run(...statement.params);
-      })();
-      return;
-    }
-    if (!this.mysqlPool) throw new Error('Database not connected');
-    const connection = await this.mysqlPool.getConnection();
-    try {
-      await connection.beginTransaction();
-      for (const statement of statements) {
-        await connection.execute(statement.sql, normalizeMySQLParams(statement.params, statement.sql));
-      }
-      await connection.commit();
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
+    await this.runTransaction(statements);
   }
 
   private async bulkInsert(table: string, columns: string[], rows: Record<string, unknown>[], execute: (sql: string, params: unknown[]) => Promise<unknown> = (sql, params) => this.run(sql, params)): Promise<void> {

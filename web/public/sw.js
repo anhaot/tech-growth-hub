@@ -1,4 +1,5 @@
-const CACHE_NAME = 'tech-growth-hub-shell-v4';
+const CACHE_PREFIX = 'tech-growth-hub-shell-';
+const CACHE_NAME = `${CACHE_PREFIX}v5`;
 const SHELL_URLS = ['/manifest.webmanifest', '/app-icon.svg'];
 
 async function fetchAndCache(cache, url) {
@@ -22,14 +23,13 @@ async function precacheShell() {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(precacheShell());
-  self.skipWaiting();
+  event.waitUntil(precacheShell().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -44,22 +44,31 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('/', copy));
+        .then(async (response) => {
+          if (response.ok && response.headers.get('Content-Type')?.includes('text/html')) {
+            try {
+              const cache = await caches.open(CACHE_NAME);
+              await cache.put('/', response.clone());
+            } catch { /* A cache write failure must not replace a valid online response. */ }
+          }
           return response;
         })
-        .catch(() => caches.match('/'))
+        .catch(async () => {
+          const cache = await caches.open(CACHE_NAME);
+          return await cache.match('/') || new Response('离线页面暂不可用，请联网后重试。', {
+            status: 503,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          });
+        })
     );
     return;
   }
 
   if (['script', 'style', 'font', 'image'].includes(request.destination)) {
     event.respondWith(
-      caches.match(request, { ignoreVary: true }).then((cached) => cached || fetch(request).then((response) => {
+      caches.open(CACHE_NAME).then(async (cache) => await cache.match(request, { ignoreVary: true }) || fetch(request).then(async (response) => {
         if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          try { await cache.put(request, response.clone()); } catch { /* The network response remains usable. */ }
         }
         return response;
       }))

@@ -16,20 +16,25 @@ function validateId(id: string): boolean {
 }
 
 function levenshteinDistance(a: string, b: string): number {
-  const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
-  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
-  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  const cutoff = 2;
+  if (Math.abs(a.length - b.length) > cutoff) return cutoff + 1;
+  let previous = new Map<number, number>();
+  for (let j = 0; j <= Math.min(b.length, cutoff); j++) previous.set(j, j);
   for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
+    const current = new Map<number, number>();
+    if (i <= cutoff) current.set(0, i);
+    let minimum = current.get(0) ?? cutoff + 1;
+    for (let j = Math.max(1, i - cutoff); j <= Math.min(b.length, i + cutoff); j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost
-      );
+      const distance = Math.min((previous.get(j) ?? cutoff + 1) + 1,
+        (current.get(j - 1) ?? cutoff + 1) + 1, (previous.get(j - 1) ?? cutoff + 1) + cost);
+      current.set(j, distance);
+      minimum = Math.min(minimum, distance);
     }
+    if (minimum > cutoff) return cutoff + 1;
+    previous = current;
   }
-  return dp[a.length][b.length];
+  return previous.get(b.length) ?? cutoff + 1;
 }
 
 function simplifyTag(tag: string): string {
@@ -192,7 +197,7 @@ router.get('/tags/health', requirePermission('tag_manage', '没有标签管理�
     const aliased = Object.entries(aliases).map(([alias, target]) => ({ alias, target }));
     const similarPairs: TagHealthPair[] = [];
 
-    for (let i = 0; i < tags.length; i++) {
+    scan: for (let i = 0; i < tags.length; i++) {
       for (let j = i + 1; j < tags.length; j++) {
         const left = tags[i].name;
         const right = tags[j].name;
@@ -210,6 +215,7 @@ router.get('/tags/health', requirePermission('tag_manage', '没有标签管理�
 
         if (reason) {
           similarPairs.push({ left, right, reason });
+          if (similarPairs.length === 20) break scan;
         }
       }
     }
@@ -473,6 +479,26 @@ router.get('/last-viewed', async (req: AuthRequest, res: Response) => {
     res.json(question ? progress : null);
   } catch (error) {
     res.status(500).json({ error: '获取学习进度失败' });
+  }
+});
+
+router.post('/bookmarked/remove', async (req: AuthRequest, res: Response) => {
+  try {
+    const { ids, mode } = z.object({
+      ids: z.array(z.string().uuid()).min(1).max(500),
+      mode: z.enum(['study', 'quiz']).default('study'),
+    }).parse(req.body);
+    const uniqueIds = [...new Set(ids)];
+    for (const id of uniqueIds) {
+      if (!await getAccessibleQuestion(req.user!, id)) {
+        res.status(404).json({ error: '题目不存在或无权访问，收藏未更改' });
+        return;
+      }
+    }
+    const removedCount = await db.removeBookmarks(req.user!.id, mode, uniqueIds);
+    res.json({ removedCount });
+  } catch (error) {
+    res.status(error instanceof z.ZodError ? 400 : 500).json({ error: '批量取消收藏失败' });
   }
 });
 
