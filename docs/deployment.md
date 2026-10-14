@@ -93,7 +93,16 @@ PWA 安装、Service Worker 和离线页面在 HTTPS 或浏览器认可的 local
 
 ### 构建产物
 
-在与目标服务器相同的操作系统 / libc、CPU 架构和 Node.js 主版本上构建。建议 Node.js 22.13.0 或更新的 22.x、npm 10+。SQLite 依赖包含原生模块，不要把 Alpine 容器依赖直接复制到普通 Linux 服务器，或跨架构复用 `node_modules`。
+在与目标服务器相同的操作系统版本 / libc、CPU 架构和 Node.js 主版本上构建。建议 Node.js 22.13.0 或更新的 22.x、npm 10+。SQLite 依赖包含原生模块，不要把 Alpine 容器依赖直接复制到普通 Linux 服务器，或跨架构复用 `node_modules`。
+
+构建端还需 Python 3、Make 和 C/C++ 编译器，供 SQLite 原生依赖在没有匹配预编译包时从源码编译。Debian / Ubuntu 可先安装：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential python3
+```
+
+目标服务器直接使用已构建的产物时无需再安装编译工具。
 
 在源码根目录执行：
 
