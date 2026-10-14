@@ -20,7 +20,6 @@ import {
   DatabaseProfile,
   DatabaseCounts,
   DatabaseInfo,
-  SimilarQuestionPair,
   QuestionVersion,
   DuplicateScanResult,
   BackupPayload,
@@ -100,8 +99,6 @@ export const authApi = {
 export const categoryApi = {
   getAll: () => api.get<Category[]>('/categories'),
   
-  getById: (id: string) => api.get<Category>(`/categories/${id}`),
-  
   create: (data: { name: string; description?: string; parentId?: string }) =>
     api.post<Category>('/categories', data),
   
@@ -140,9 +137,6 @@ export const questionApi = {
   batchTags: (data: { ids: string[]; mode: 'add' | 'remove' | 'replace'; tags: string[] }) =>
     api.post<{ updated: number; message: string }>('/questions/batch-tags', data),
 
-  getSimilarDuplicates: () =>
-    api.get<{ total: number; pairs: SimilarQuestionPair[] }>('/questions/duplicates/similar'),
-
   mergeDuplicate: (keepId: string, removeId: string) =>
     api.post<{ message: string; keepId: string; removeId: string }>('/questions/duplicates/merge', { keepId, removeId }),
   
@@ -153,8 +147,6 @@ export const questionApi = {
 
   resetLearningProgress: () =>
     api.delete<{ cleared: number; message: string }>('/questions/progress/reset'),
-  
-  getById: (id: string) => api.get<Question>(`/questions/${id}`),
   
   create: (data: { title: string; content: string; answer?: string; explanation?: string; difficulty?: string; categoryId?: string; tags?: string[] }) =>
     api.post<Question>('/questions', data),
@@ -172,18 +164,6 @@ export const questionApi = {
   
   saveProgress: (questionId: string, data: { mode: string; isBookmarked?: boolean }) =>
     api.post<LearningProgress>(`/questions/${questionId}/progress`, data),
-  
-  getProgress: (questionId: string, mode?: string) =>
-    api.get<LearningProgress | null>(`/questions/${questionId}/progress`, { params: { mode } }),
-  
-  getNext: (id: string, categoryId?: string) =>
-    api.get<{ nextQuestion: Question | null }>(`/questions/navigate/${id}/next`, { params: { categoryId } }),
-  
-  getPrev: (id: string, categoryId?: string) =>
-    api.get<{ prevQuestion: Question | null }>(`/questions/navigate/${id}/prev`, { params: { categoryId } }),
-  
-  getRandom: (categoryId?: string) =>
-    api.get<{ randomQuestion: Question | null }>('/questions/navigate/random', { params: { categoryId } }),
 };
 
 export const importApi = {
@@ -195,32 +175,6 @@ export const importApi = {
   previewText: (questions: unknown[], categoryId?: string) => api.post<ImportPreview>('/import/preview/text', { questions, categoryId }),
   getPreview: (id: string, page: number) => api.get<ImportPreview>(`/import/preview/${id}`, { params: { page } }),
   commitPreview: (id: string, excludedRows: number[]) => api.post<ImportResult>(`/import/preview/${id}/commit`, { excludedRows }),
-  importCsv: (file: File, categoryId?: string) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (categoryId) formData.append('categoryId', categoryId);
-    return api.post<ImportResult>('/import/csv', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  
-  importJson: (file: File, categoryId?: string) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (categoryId) formData.append('categoryId', categoryId);
-    return api.post<ImportResult>('/import/json', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  
-  importMarkdown: (file: File, categoryId?: string) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (categoryId) formData.append('categoryId', categoryId);
-    return api.post<ImportResult>('/import/markdown', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
   
   importText: (questions: Array<{ title: string; content: string; answer: string; explanation?: string; difficulty?: string; tags?: string[] }>, categoryId?: string) =>
     api.post<ImportResult>('/import/text', { questions, categoryId }),
@@ -283,9 +237,6 @@ export const aiApi = {
 
   checkConfig: (id: string) =>
     api.post<AIModelCheckResult>(`/ai/config/${id}/check`),
-
-  checkAllConfigs: () =>
-    api.post<{ results: AIModelCheckResult[] }>('/ai/config/check-all'),
   
   analyze: (questionId: string, provider?: string) =>
     api.post<{ result: string }>('/ai/analyze', { questionId, provider }),
@@ -299,14 +250,8 @@ export const aiApi = {
   generate: (questionId: string, count?: number, provider?: string) =>
     api.post<{ result: string }>('/ai/generate', { questionId, count, provider }),
   
-  explain: (concept: string, context?: string, provider?: string) =>
-    api.post<{ result: string }>('/ai/explain', { concept, context, provider }),
-  
   chat: (questionId: string, message: string, provider?: string) =>
     api.post<{ result: string }>('/ai/chat', { questionId, message, provider }),
-  
-  testConfig: (configId: string) =>
-    api.post<{ success: boolean; message: string; result: string }>('/ai/test-config', { configId }),
 
   batchGenerate: (data: {
     topic: string;
@@ -381,9 +326,6 @@ export const adminApi = {
   getInfo: () => api.get<DatabaseInfo>('/admin/info'),
   
   getStats: () => api.get<{ questionCount: number; categoryCount: number }>('/admin/stats'),
-  
-  getUsers: (page?: number, pageSize?: number) =>
-    api.get<PaginatedResult<User>>('/admin/users', { params: { page, pageSize } }),
   
   deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
 

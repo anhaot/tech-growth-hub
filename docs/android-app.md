@@ -87,8 +87,6 @@ APK 位于 `mobile/android/app/build/outputs/apk/release/app-release.apk`。生�
 
 已有原生目录时，可从 `mobile/` 使用 `bash scripts/build-android-local.sh package` 进行 ARM64 串行构建。此脚本限制 Gradle、Metro 和 C++ 编译并发；运行前应配置自己的 SDK 与 Java 环境，堆大小可用 `TGH_GRADLE_HEAP` 调整。内存受限时串行运行测试、导出和原生构建。
 
-仓库提供手动 `Android preview APK` 工作流：在 GitHub Actions 中运行后，下载 `tech-growth-hub-android-preview` Artifact。它用于预览，不自动发布到 Release 或应用商店。
-
 也可使用 EAS Build。`eas.json` 提供内部 APK 配置和正式 AAB 配置：
 
 ```bash
@@ -124,4 +122,4 @@ python3 scripts/verify-apk.py --apk android/app/build/outputs/apk/release/app-re
 
 脚本验证版本、升级签名、权限、原生模块、Hermes 和内置代码，并在成功后生成校验结果与校验和。`--sdk` 接受 SDK 根目录或具体 build-tools 目录。升级验证需在 APK 同目录保留自己此前版本的签名校验记录；首次建立发布基线时可明确加 `--allow-first-release`，此时不会声称已验证升级签名。使用 `python3 -O` 仍会执行校验。
 
-该脚本依赖本地构建中间产物，不能直接用于任意下载的 EAS 或 Actions APK。安装与发布前仍应在目标设备验证登录和改密、HTTP/HTTPS 连接、阅读与切题、键盘与返回键、离线同步、AI 取消与补全、文件分享和覆盖升级。
+该脚本依赖本地构建中间产物，不能直接用于任意下载的 APK 或 EAS APK。安装与发布前仍应在目标设备验证登录和改密、HTTP/HTTPS 连接、阅读与切题、键盘与返回键、离线同步、AI 取消与补全、文件分享和覆盖升级。

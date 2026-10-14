@@ -1737,6 +1737,8 @@ const AIBatchTagsModal: React.FC<AIBatchTagsModalProps> = ({ isOpen, selectedCou
 };
 
 const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose, onSaved }) => {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [slowLoading, setSlowLoading] = useState(false);
@@ -1784,8 +1786,9 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
         }
       })
       .catch((error: any) => {
+        if (!active) return;
         toast.error(error.response?.data?.error || 'AI润色失败');
-        onClose();
+        onCloseRef.current();
       })
       .finally(() => {
         if (slowTimer) {
@@ -1803,12 +1806,12 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
         window.clearTimeout(slowTimer);
       }
     };
-  }, [isOpen, question, onClose, mode]);
+  }, [isOpen, question, mode]);
 
   if (!isOpen || !question) return null;
 
   const handleSave = async () => {
-    if (!draft) return;
+    if (!draft || loading || saving) return;
     setSaving(true);
     try {
       await questionApi.update(question.id, {
@@ -1868,7 +1871,7 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
 
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-transparent" onClick={onClose} />
+      <div className="absolute inset-0 bg-transparent" onClick={() => { if (!saving) onClose(); }} />
       <div className="relative flex min-h-full items-center justify-center px-4 py-6">
         <div data-testid="ai-polish-modal" className="app-modal-panel flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden">
           <div className="app-modal-header flex items-center justify-between px-6 py-4">
@@ -1876,7 +1879,7 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
               <h2 className="text-lg font-semibold text-gray-900">AI 润色</h2>
               <p className="text-sm text-gray-500">先预览并编辑润色内容，再决定是否写回当前题目</p>
             </div>
-            <button onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
+            <button disabled={saving} aria-label="关闭 AI 润色" onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
               <X size={20} />
             </button>
           </div>
@@ -1911,7 +1914,7 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
                           key={option.value}
                           type="button"
                           onClick={() => setMode(option.value)}
-                          disabled={loading}
+                          disabled={loading || saving}
                           className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                             mode === option.value
                               ? 'bg-primary-600 text-white'
@@ -1960,7 +1963,7 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
             </div>
           ) : null}
           <div className="flex justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-6 py-4">
-            <button onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-gray-700 transition-all hover:bg-gray-50">
+            <button disabled={saving} onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-gray-700 transition-all hover:bg-gray-50">
               取消
             </button>
             <button

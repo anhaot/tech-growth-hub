@@ -7,3 +7,8 @@ uploads
 .env.*
 !.env.example
 *.log
+*.tsbuildinfo
+# Local data revision utilities are not part of the application.
+src/scripts/applyQuestionAuditFixes.mjs
+src/scripts/applyExperienceAnswerFixes.ts
+src/scripts/experienceAnswers.ts

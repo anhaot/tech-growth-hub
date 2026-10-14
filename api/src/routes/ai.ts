@@ -355,27 +355,31 @@ async function getAccessibleQuestion(user: User, questionId: string) {
   return question;
 }
 
-router.get('/status', authMiddleware, requirePermission('ai_use', '没有AI使用权限'), async (req: AuthRequest, res: Response) => {
-  const userConfigs = await db.getAIConfigsByUserId(req.user!.id);
-  const activeConfig = userConfigs.find(c => c.is_active);
-  const availableModels = userConfigs.map(c => ({
-    id: c.id,
-    label: `${c.display_name || c.provider} · ${c.model}`,
-    provider: c.provider,
-    model: c.model,
-    isActive: Boolean(c.is_active),
-  }));
-  
-  res.json({
-    enabled: await isAIEnabled(),
-    defaultProvider: activeConfig?.display_name || activeConfig?.provider || config.ai.defaultProvider,
-    defaultConfigId: activeConfig?.id,
-    availableProviders: userConfigs.map(c => c.display_name || c.provider),
-    availableModels,
-  });
+router.get('/status', async (req: AuthRequest, res: Response) => {
+  try {
+    const userConfigs = await db.getAIConfigsByUserId(req.user!.id);
+    const activeConfig = userConfigs.find(c => c.is_active);
+    const availableModels = userConfigs.map(c => ({
+      id: c.id,
+      label: `${c.display_name || c.provider} · ${c.model}`,
+      provider: c.provider,
+      model: c.model,
+      isActive: Boolean(c.is_active),
+    }));
+
+    res.json({
+      enabled: await isAIEnabled(),
+      defaultProvider: activeConfig?.display_name || activeConfig?.provider || config.ai.defaultProvider,
+      defaultConfigId: activeConfig?.id,
+      availableProviders: userConfigs.map(c => c.display_name || c.provider),
+      availableModels,
+    });
+  } catch {
+    res.status(500).json({ error: '获取 AI 状态失败' });
+  }
 });
 
-router.put('/settings', authMiddleware, requirePermission('system_manage', '没有系统管理权限'), async (req: AuthRequest, res: Response) => {
+router.put('/settings', requirePermission('system_manage', '没有系统管理权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiSettingsSchema.parse(req.body);
     
@@ -397,7 +401,7 @@ router.put('/settings', authMiddleware, requirePermission('system_manage', '没�
   }
 });
 
-router.get('/config', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.get('/config', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const configs = await db.getAIConfigsByUserId(req.user!.id);
     res.json(configs.map(toPublicAIConfig));
@@ -406,12 +410,16 @@ router.get('/config', authMiddleware, requirePermission('ai_config_manage', '没
   }
 });
 
-router.get('/credentials', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
-  const credentials = await db.getAICredentialsByUserId(req.user!.id);
-  res.json(credentials.map(toPublicAICredential));
+router.get('/credentials', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+  try {
+    const credentials = await db.getAICredentialsByUserId(req.user!.id);
+    res.json(credentials.map(toPublicAICredential));
+  } catch {
+    res.status(500).json({ error: '获取 API 凭据失败' });
+  }
 });
 
-router.post('/credentials', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.post('/credentials', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiCredentialSchema.parse(req.body);
     const baseUrl = validateAIBaseUrl(data.baseUrl, req.user!, true);
@@ -435,7 +443,7 @@ router.post('/credentials', authMiddleware, requirePermission('ai_config_manage'
   }
 });
 
-router.put('/credentials/:id', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.put('/credentials/:id', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiCredentialSchema.partial().parse(req.body);
     const existing = await db.getAICredentialByIdForUser(req.params.id, req.user!.id);
@@ -464,20 +472,24 @@ router.put('/credentials/:id', authMiddleware, requirePermission('ai_config_mana
   }
 });
 
-router.delete('/credentials/:id', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
-  const result = await db.deleteAICredentialForUser(req.params.id, req.user!.id);
-  if (result === 'missing') {
-    res.status(404).json({ error: 'API 凭据不存在' });
-    return;
+router.delete('/credentials/:id', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await db.deleteAICredentialForUser(req.params.id, req.user!.id);
+    if (result === 'missing') {
+      res.status(404).json({ error: 'API 凭据不存在' });
+      return;
+    }
+    if (result === 'in_use') {
+      res.status(409).json({ error: '该凭据仍被模型配置使用，请先删除或切换相关模型' });
+      return;
+    }
+    res.json({ message: 'API 凭据已删除' });
+  } catch {
+    res.status(500).json({ error: '删除 API 凭据失败' });
   }
-  if (result === 'in_use') {
-    res.status(409).json({ error: '该凭据仍被模型配置使用，请先删除或切换相关模型' });
-    return;
-  }
-  res.json({ message: 'API 凭据已删除' });
 });
 
-router.post('/models', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.post('/models', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiModelsSchema.parse(req.body);
     let baseUrl = data.baseUrl;
@@ -523,7 +535,7 @@ router.post('/models', authMiddleware, requirePermission('ai_config_manage', '�
   }
 });
 
-router.post('/config/check-all', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.post('/config/check-all', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const configs = await db.getAIConfigsByUserId(req.user!.id);
     // Keep a small concurrency cap so a slow provider does not block every
@@ -544,7 +556,7 @@ router.post('/config/check-all', authMiddleware, requirePermission('ai_config_ma
   }
 });
 
-router.delete('/config/invalid', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.delete('/config/invalid', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const configs = await db.getAIConfigsByUserId(req.user!.id);
     const invalidConfigs = configs.filter((aiConfig) => aiConfig.model_status === 'invalid');
@@ -562,7 +574,7 @@ router.delete('/config/invalid', authMiddleware, requirePermission('ai_config_ma
   }
 });
 
-router.post('/config', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.post('/config', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiConfigSchema.parse(req.body);
     const sourceConfig = data.sourceConfigId
@@ -617,7 +629,7 @@ router.post('/config', authMiddleware, requirePermission('ai_config_manage', '�
   }
 });
 
-router.put('/config/:id', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.put('/config/:id', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiConfigSchema.partial().parse(req.body);
     const existing = await db.getAIConfigByIdForUser(req.params.id, req.user!.id);
@@ -667,7 +679,7 @@ router.put('/config/:id', authMiddleware, requirePermission('ai_config_manage', 
   }
 });
 
-router.post('/config/:id/check', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.post('/config/:id/check', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const aiConfig = await db.getAIConfigByIdForUser(req.params.id, req.user!.id);
     if (!aiConfig) {
@@ -681,7 +693,7 @@ router.post('/config/:id/check', authMiddleware, requirePermission('ai_config_ma
   }
 });
 
-router.delete('/config/:id', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.delete('/config/:id', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const deleted = await db.deleteAIConfigForUser(req.params.id, req.user!.id);
     if (!deleted) {
@@ -694,7 +706,7 @@ router.delete('/config/:id', authMiddleware, requirePermission('ai_config_manage
   }
 });
 
-router.put('/config/:id/active', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.put('/config/:id/active', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const configs = await db.getAIConfigsByUserId(req.user!.id);
     const config = configs.find(c => c.id === req.params.id);
@@ -712,7 +724,7 @@ router.put('/config/:id/active', authMiddleware, requirePermission('ai_config_ma
   }
 });
 
-router.post('/analyze', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/analyze', async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, provider } = req.body;
     
@@ -753,7 +765,7 @@ router.post('/analyze', authMiddleware, async (req: AuthRequest, res: Response) 
   }
 });
 
-router.post('/expand', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/expand', async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, provider } = req.body;
     
@@ -784,7 +796,7 @@ router.post('/expand', authMiddleware, async (req: AuthRequest, res: Response) =
   }
 });
 
-router.post('/recommend', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/recommend', async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, provider } = req.body;
     
@@ -815,7 +827,7 @@ router.post('/recommend', authMiddleware, async (req: AuthRequest, res: Response
   }
 });
 
-router.post('/generate', authMiddleware, requirePermission('ai_generate', '没有AI生题权限'), async (req: AuthRequest, res: Response) => {
+router.post('/generate', requirePermission('ai_generate', '没有AI生题权限'), async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, count, provider } = req.body;
     
@@ -847,7 +859,7 @@ router.post('/generate', authMiddleware, requirePermission('ai_generate', '没�
   }
 });
 
-router.post('/explain', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/explain', async (req: AuthRequest, res: Response) => {
   try {
     const { concept, context, provider } = req.body;
 
@@ -872,7 +884,7 @@ router.post('/explain', authMiddleware, async (req: AuthRequest, res: Response) 
   }
 });
 
-router.post('/chat', authMiddleware, requirePermission('ai_chat', '没有AI对话权限'), async (req: AuthRequest, res: Response) => {
+router.post('/chat', requirePermission('ai_chat', '没有AI对话权限'), async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, message, provider } = z.object({
       questionId: z.string().uuid().optional(),
@@ -910,7 +922,7 @@ router.post('/chat', authMiddleware, requirePermission('ai_chat', '没有AI对�
   }
 });
 
-router.post('/test-config', authMiddleware, requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
+router.post('/test-config', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const { configId } = req.body;
     
@@ -959,7 +971,7 @@ router.post('/test-config', authMiddleware, requirePermission('ai_config_manage'
   }
 });
 
-router.post('/batch-generate', authMiddleware, requirePermission('ai_generate', '没有AI生题权限'), async (req: AuthRequest, res: Response) => {
+router.post('/batch-generate', requirePermission('ai_generate', '没有AI生题权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = batchGenerateSchema.parse(req.body);
     const userConfig = await db.getActiveAIConfig(req.user!.id);
@@ -1028,7 +1040,7 @@ router.post('/batch-generate', authMiddleware, requirePermission('ai_generate', 
   }
 });
 
-router.post('/polish-question', authMiddleware, requirePermission('ai_polish', '没有AI润色权限'), async (req: AuthRequest, res: Response) => {
+router.post('/polish-question', requirePermission('ai_polish', '没有AI润色权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = polishQuestionSchema.parse(req.body);
     const question = await getAccessibleQuestion(req.user!, data.questionId);
@@ -1098,7 +1110,7 @@ tags: ${JSON.stringify(parseStoredTags(question.tags, tagAliases))}`;
   }
 });
 
-router.post('/answer-drafts/raw', authMiddleware, requirePermission('ai_polish', '没有AI润色权限'), async (req: AuthRequest, res: Response) => {
+router.post('/answer-drafts/raw', requirePermission('ai_polish', '没有AI润色权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = rawAnswerDraftSchema.parse(req.body);
     const userConfig = await db.getActiveAIConfig(req.user!.id);
@@ -1183,7 +1195,7 @@ ${source}`;
   }
 });
 
-router.post('/answer-draft', authMiddleware, requirePermission('ai_polish', '没有AI润色权限'), async (req: AuthRequest, res: Response) => {
+router.post('/answer-draft', requirePermission('ai_polish', '没有AI润色权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = answerDraftSchema.parse(req.body);
     const question = await getAccessibleQuestion(req.user!, data.questionId);
@@ -1266,7 +1278,6 @@ existingTags: ${JSON.stringify(existingTags)}
 
 router.post(
   '/batch-tags',
-  authMiddleware,
   requirePermission('question_batch_edit', '没有批量编辑题目权限'),
   requirePermission('ai_polish', '没有AI润色权限'),
   async (req: AuthRequest, res: Response) => {

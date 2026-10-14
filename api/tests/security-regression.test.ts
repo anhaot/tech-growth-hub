@@ -1318,3 +1318,30 @@ test('concurrent deletion and both role update paths preserve the last administr
     } finally { await isolated.close(); }
   }
 });
+
+test('AI database failures return JSON errors, preserve credentials and allow subsequent requests', async (t) => {
+  const user = await createUser('ai-read-failure', 'ai-read-failure@example.com', 'Password123');
+  const headers = { Authorization: `Bearer ${user.token}` };
+  for (const [endpoint, method, message] of [
+    ['/api/ai/status', 'getAIConfigsByUserId', '获取 AI 状态失败'],
+    ['/api/ai/credentials', 'getAICredentialsByUserId', '获取 API 凭据失败'],
+  ] as const) {
+    const mock = t.mock.method(db, method, async () => { throw new Error('simulated read failure'); });
+    const response = await app.get(endpoint).set(headers);
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error, message);
+    mock.mock.restore();
+    assert.equal((await app.get(endpoint).set(headers)).status, 200);
+  }
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  await db.createAICredential({ id, user_id: user.user.id, name: 'preserved credential',
+    base_url: 'https://api.openai.com/v1', api_key: 'secret-key', created_at: now, updated_at: now });
+  const deletion = t.mock.method(db, 'deleteAICredentialForUser', async () => { throw new Error('simulated delete failure'); });
+  const response = await app.delete(`/api/ai/credentials/${id}`).set(headers);
+  assert.equal(response.status, 500);
+  assert.equal(response.body.error, '删除 API 凭据失败');
+  deletion.mock.restore();
+  assert.ok(await db.getAICredentialByIdForUser(id, user.user.id));
+  assert.equal((await app.delete(`/api/ai/credentials/${id}`).set(headers)).status, 200);
+});

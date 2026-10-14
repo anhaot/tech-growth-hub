@@ -64,7 +64,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "10089:8080"
+      - "${WEB_PORT:-10089}:8080"
     depends_on:
       api:
         condition: service_healthy

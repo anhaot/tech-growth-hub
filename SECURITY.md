@@ -6,14 +6,12 @@ Security fixes are applied to the default branch. Deployments should update to a
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a suspected vulnerability. Use the repository's **Security → Report a vulnerability** form (GitHub Private Vulnerability Reporting) and include:
+Please avoid posting credentials or exploit details in public issues. If the repository has GitHub Private Vulnerability Reporting enabled, use **Security → Report a vulnerability** and include:
 
 - affected version or commit
 - reproduction steps or a minimal proof of concept
 - expected impact
 - suggested remediation, if available
-
-You should receive an acknowledgement within 72 hours. After triage, maintainers will coordinate a fix and disclosure timeline with the reporter.
 
 ## Deployment responsibilities
 

@@ -72,12 +72,6 @@ export function clearStoredAuthState() {
   clearLegacyAuthState();
 }
 
-export function getStoredToken(): string | null {
-  writeStorage('sessionStorage', TOKEN_STORAGE_KEY);
-  writeStorage('localStorage', TOKEN_STORAGE_KEY);
-  return null;
-}
-
 migrateLegacyAuthState();
 
 export const useAuthStore = create<AuthState>()(

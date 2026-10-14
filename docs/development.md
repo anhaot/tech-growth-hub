@@ -1,6 +1,6 @@
 # 开发指南
 
-MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYSQL_TEST_HOST`、`MYSQL_TEST_PORT`（默认 3306）、`MYSQL_TEST_USER`、`MYSQL_TEST_PASSWORD` 和专用的 `MYSQL_TEST_DATABASE`（名称以 `tgh_test_` 开头）。测试会对该数据库做完整备份和替换，不能指向正式数据库；CI 使用临时 MariaDB 12.3.2 服务验证日期格式正文、设置值与版本时间的毫秒精度。
+MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYSQL_TEST_HOST`、`MYSQL_TEST_PORT`（默认 3306）、`MYSQL_TEST_USER`、`MYSQL_TEST_PASSWORD` 和专用的 `MYSQL_TEST_DATABASE`（名称以 `tgh_test_` 开头）。测试会对该数据库做完整备份和替换，不能指向正式数据库；可在本地专用 MariaDB / MySQL 数据库验证正文、设置值与版本时间精度。
 
 ## 1. 目标
 
@@ -58,7 +58,7 @@ MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYS
 
 ## 3. 本地开发
 
-建议使用 Node.js 22 LTS 的 22.13.0 或更新版本及 npm 10+；Web 当前 Vite 至少需要 22.12.0，App 当前 React Native 至少需要 22.13.0。CI 使用 Node 22 的当前补丁版。
+建议使用 Node.js 22 LTS 的 22.13.0 或更新版本及 npm 10+；Web 当前 Vite 至少需要 22.12.0，App 当前 React Native 至少需要 22.13.0。
 
 ### 安装依赖
 
@@ -67,7 +67,7 @@ MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYS
 ```bash
 cd api
 cp .env.example .env
-# 无本地 MySQL 时，将 .env 中的 DATABASE_TYPE 改为 sqlite
+# 用 openssl rand -hex 32 分别生成 JWT_SECRET 和 AI_CONFIG_ENCRYPTION_KEY，填入 .env
 npm ci
 ```
 
@@ -77,6 +77,8 @@ npm ci
 cd web
 npm ci
 ```
+
+API 示例默认使用 SQLite；先替换 JWT 和 AI 加密密钥占位符，再启动服务。使用 MySQL 时设置 `DATABASE_TYPE=mysql`，并填写可访问的主机与数据库账号。AI Key 默认为空，可在设置页面添加真实凭据。
 
 ### 启动开发环境
 
@@ -206,9 +208,9 @@ cd api && npm run build
 cd ../web && npm run build
 ```
 
-### 安卓 App 与维护脚本
+### 安卓 App
 
-App 位于 `mobile/`，使用独立的依赖与 TypeScript 配置。客户端测试覆盖请求、会话存储、离线题库、阅读与 AI 导出；`test:integration` 使用独立 SQLite 验证真实 API 合约。APK 校验和清理脚本测试需要 Python 3.11+，使用临时项目与模拟工具，不清理工作区或构建原生 APK。
+App 位于 `mobile/`，使用独立的依赖与 TypeScript 配置。客户端测试覆盖请求、会话存储、离线题库、阅读与 AI 导出；`test:integration` 使用独立 SQLite 验证真实 API 合约。APK 校验脚本测试需要 Python 3.11+，使用临时项目与模拟工具，不构建原生 APK。
 
 ```bash
 cd mobile
@@ -218,8 +220,6 @@ npm test
 npm run test:scripts
 npm run test:integration
 npm run export:android
-cd ..
-python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 ```
 
 详细构建条件与设备验证边界见 [安卓 App](./android-app.md)。
@@ -414,7 +414,7 @@ cd web && npm run e2e
 - `GET /api/questions/duplicates/scan/:jobId?page=1&memberPage=1`：进度与结果；结果页每页 20 条，同标题组成员另按 20 道分页。
 - 旧 `/duplicates/similar` 接口保留，但新页面使用后台任务和轮询。
 
-`questions.revision` 在启动时为旧数据库补齐默认值 1；`question_versions` 保存 JSON 快照、版本、操作者和来源，参与备份与迁移。所有业务内容写入经过版本事务，删除题目级联删除版本；修订脚本同样保留快照。
+`questions.revision` 在启动时为旧数据库补齐默认值 1；`question_versions` 保存 JSON 快照、版本、操作者和来源，参与备份与迁移。所有业务内容写入经过版本事务，删除题目级联删除版本。
 
 列表与学习按 `created_at DESC, id DESC` 排序。Web 学习保留当前 100 道，全库后台扫描每批读 1000 道且不设题目总量上限。查重候选索引与穷举评分对照验证，最多保留 10,000 个最高分结果，匹配总数单独统计。任务为进程内状态，部署多个实例时需要会话固定或改用持久队列。
 

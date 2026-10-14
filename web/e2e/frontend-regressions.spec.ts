@@ -246,3 +246,101 @@ test('浏览器禁用 Web Storage 仍可用 Cookie 登录，题目 HTML 与实�
   await expect(page.getByRole('button', { name: '深度对话', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('已关闭的 AI 润色请求失败不会关闭后来打开的弹窗', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_polish_race`);
+  const login = await apiLogin(request, user.username, user.password);
+  const question = await createQuestion(request, login.token, {
+    title: '润色请求隔离', content: '润色请求隔离题干', answer: '原答案',
+  });
+  let releaseOldRequest: () => void = () => undefined;
+  const oldRequestReady = new Promise<void>((resolve) => { releaseOldRequest = resolve; });
+  let requests = 0;
+  await page.route('**/api/ai/polish-question', async (route) => {
+    requests++;
+    if (requests === 1) {
+      await oldRequestReady;
+      return route.fulfill({ status: 502, json: { error: '旧润色请求失败' } });
+    }
+    return route.fulfill({ json: {
+      question,
+      draft: { ...question, explanation: '', tags: [], answer: '新润色草稿' },
+      raw: 'mocked',
+    } });
+  });
+  await primeAuth(page, login);
+  await page.goto('/questions');
+  await page.getByTestId(`question-polish-${question.id}`).last().click();
+  const modal = page.getByTestId('ai-polish-modal');
+  const oldResponse = page.waitForResponse((response) => response.url().endsWith('/ai/polish-question') && response.status() === 502);
+  try {
+    await expect.poll(() => requests).toBe(1);
+    await modal.getByRole('button', { name: '取消', exact: true }).click();
+    await page.getByTestId(`question-polish-${question.id}`).last().click();
+    await expect(modal.getByRole('textbox', { name: '答案', exact: true })).toHaveValue('新润色草稿');
+  } finally {
+    releaseOldRequest();
+  }
+  await (await oldResponse).finished();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(modal).toBeVisible();
+  await expect(page.getByText('旧润色请求失败', { exact: true })).toHaveCount(0);
+  await expect(modal.getByRole('textbox', { name: '答案', exact: true })).toHaveValue('新润色草稿');
+});
+
+test('学习题库缩减后跨页跳转回到有效题号，即使目标页仍有题目', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_study_shrink`);
+  const login = await apiLogin(request, user.username, user.password);
+  const question = await createQuestion(request, login.token, {
+    title: '学习页缩减', content: '学习页缩减题干', answer: '参考答案',
+  });
+  const questions = Array.from({ length: 150 }, (_, index) => ({ ...question, content: `缩减题库第 ${index + 1} 题` }));
+  let shrunk = false;
+  await page.route(/\/api\/questions\?/, (route) => {
+    const pageNumber = Number(new URL(route.request().url()).searchParams.get('page'));
+    if (pageNumber === 2) shrunk = true;
+    const total = shrunk ? 105 : 150;
+    return route.fulfill({ json: {
+      data: questions.slice((pageNumber - 1) * 100, Math.min(pageNumber * 100, total)),
+      total, page: pageNumber, pageSize: 100, totalPages: 2,
+    } });
+  });
+  await primeAuth(page, login);
+  await page.goto('/study');
+  await expect(page.getByTestId('learning-question-content')).toContainText('缩减题库第 1 题');
+  await page.locator('input[aria-label="跳转题号"]:visible').fill('150');
+  await page.getByRole('button', { name: '跳转', exact: true }).click();
+  await expect(page.getByTestId('learning-question-content')).toContainText('缩减题库第 105 题');
+  await expect(page.getByRole('progressbar', { name: '当前浏览位置' })).toHaveAttribute('aria-valuenow', '100');
+});
+
+test('其他页面阻塞离线数据库升级时提示重试，解除占用后仍能保存草稿', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_blocked_drafts`);
+  const login = await apiLogin(request, user.username, user.password);
+  await primeAuth(page, login);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '打开个人资料' })).toBeVisible();
+  await page.evaluate(async () => {
+    const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('tech-growth-hub-offline', 1);
+      request.onupgradeneeded = () => {
+        const store = request.result.createObjectStore('interviewDrafts', { keyPath: 'id' });
+        store.createIndex('userId', 'userId');
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    // Keep an old connection without a versionchange handler, as an older tab might.
+    Object.assign(window, { legacyDraftConnection: legacy });
+  });
+  await page.getByRole('link', { name: '记题', exact: true }).click();
+  await expect(page.getByText('离线数据库升级被其他页面占用，请关闭其他页面后重试', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { legacyDraftConnection: IDBDatabase }).legacyDraftConnection.close();
+  });
+  await page.getByPlaceholder(/每行一道题/).fill('解除占用后保存的草稿');
+  await page.getByRole('button', { name: '保存到草稿箱' }).click();
+  await expect(page.getByText('草稿箱（1）')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '第 1 题题目', exact: true })).toHaveValue('解除占用后保存的草稿');
+});

@@ -21,7 +21,6 @@ import {
 
 interface AIAssistantProps {
   question: Question;
-  onClose?: () => void;
 }
 
 const tabs = [

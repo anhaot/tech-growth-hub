@@ -86,14 +86,14 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const modeIcon = mode === 'study' ? BookOpen : Brain;
   const autoShowAnswer = mode === 'study';
 
-  const fetchQuestions = useCallback(async (restorePosition = true) => {
+  const fetchQuestions = useCallback(async (restorePosition = true, preferredIndex = 0) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     setInitialized(false);
     progressSequence.current++;
     setFetchError('');
     try {
-      let index = 0;
+      let index = preferredIndex;
       if (restorePosition) {
         const lastViewed = await questionApi.getLastViewed(mode, categoryId).catch(() => null);
         if (lastViewed?.data?.question_id) {
@@ -101,7 +101,13 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
           index = position?.data.index ?? 0;
         }
       }
-      const response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+      let response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+      if (sequence !== requestSequence.current) return;
+      const lastIndex = Math.max(0, response.data.total - 1);
+      if (index > lastIndex) {
+        index = lastIndex;
+        response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+      }
       if (sequence !== requestSequence.current) return;
       setQuestions(response.data.data);
       setTotalQuestions(response.data.total);
@@ -300,14 +306,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
       setShowMobileQuestionActions(false);
       setProgress(null);
       const nextIndex = Math.max(0, Math.min(currentIndex, totalQuestions - 2));
-      const nextPage = Math.floor(nextIndex / PAGE_SIZE) + 1;
-      const response = await questionApi.getAll({ page: nextPage, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
-      if (sequence !== requestSequence.current) return;
-      setQuestions(response.data.data);
-      setTotalQuestions(response.data.total);
-      setPageStart((nextPage - 1) * PAGE_SIZE);
-      setCurrentIndex(nextIndex);
-      setShowAnswer(autoShowAnswer);
+      await fetchQuestions(false, nextIndex);
       void fetchTags();
     } catch (error: any) {
       if (removed) {
@@ -337,7 +336,10 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
         setLoading(true);
         const response = await questionApi.getAll({ page: Math.floor(boundedIndex / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
         if (sequence !== requestSequence.current) return;
-        if (!response.data.data.length) { await fetchQuestions(false); return; }
+        if (!response.data.data.length || boundedIndex >= response.data.total) {
+          await fetchQuestions(false, Math.max(0, response.data.total - 1));
+          return;
+        }
         setQuestions(response.data.data);
         setTotalQuestions(response.data.total);
         setPageStart(Math.floor(boundedIndex / PAGE_SIZE) * PAGE_SIZE);
@@ -1035,7 +1037,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
               <AIAssistant
                 key={currentQuestion.id}
                 question={currentQuestion}
-                onClose={() => setShowAI(false)}
               />
             </div>
           )}

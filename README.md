@@ -3,7 +3,6 @@
 > 面向个人与团队的开源 AI 题库、知识治理和学习复习平台。
 
 <p align="center">
-  <a href="https://github.com/anhaot/tech-growth-hub/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/anhaot/tech-growth-hub/actions/workflows/ci.yml/badge.svg"></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/github/license/anhaot/tech-growth-hub"></a>
 </p>
 
@@ -61,7 +60,7 @@
 
 ## 快速部署
 
-要求：Docker Engine 与 Docker Compose。
+要求：Docker Engine 与 Docker Compose。API 和 Web 镜像在本机从源码构建，首次构建需要联网下载基础镜像和 npm 依赖。
 
 ```bash
 git clone https://github.com/anhaot/tech-growth-hub.git
@@ -81,9 +80,11 @@ openssl rand -hex 32
 docker compose up -d --build
 ```
 
-应用镜像使用 `.env` 中的 `APP_VERSION`，格式为 `vYYMMDD-N`，例如 `v260805-1`。项目不会默认构建或发布 `latest` 标签。
+应用镜像使用 `.env` 中的 `APP_VERSION`，格式为 `vYYMMDD-N`，例如 `v261014-1`。项目不会默认构建或发布 `latest` 标签。
 
 访问 `http://127.0.0.1:10089`。默认管理员用户名和密码均为 `admin`，首次登录必须修改密码。生产环境还应启用 HTTPS、设置明确的 `ALLOWED_ORIGINS` 并建立定期备份。
+
+`WEB_PORT` 可修改对外端口。完整的 Docker 安装、HTTPS、数据保存和升级回滚步骤，以及无需 Docker 的 Node.js / Nginx 编译产物部署，见 [部署说明](./docs/deployment.md)。
 
 ## AI 模型配置
 
@@ -106,7 +107,7 @@ API Key 只在凭据管理界面录入，服务端使用 AES-256-GCM 加密保�
 # API
 cd api
 cp .env.example .env
-# 没有本地 MySQL 时可设置 DATABASE_TYPE=sqlite
+# 用 openssl rand -hex 32 分别生成 JWT_SECRET 和 AI_CONFIG_ENCRYPTION_KEY，填入 .env
 npm ci
 npm run dev
 
@@ -116,7 +117,7 @@ npm ci
 npm run dev
 ```
 
-默认开发端口为 Web `3000`、API `3001`。
+API 示例默认使用 SQLite。默认开发端口为 Web `3000`、API `3001`。
 
 ## 项目结构
 
@@ -137,8 +138,7 @@ tech-growth-hub/
 │   └── e2e/                 # Playwright 浏览器测试
 ├── mobile/                  # Expo + React Native 安卓 App
 ├── docs/                    # 使用、AI、部署、运维与开发文档
-├── compose.yaml             # 源码构建部署
-└── compose.release.yaml     # 发布镜像部署
+└── compose.yaml             # 本地源码构建部署
 ```
 
 ## 技术栈
@@ -163,7 +163,7 @@ tech-growth-hub/
 - Service Worker 不缓存 `/api/` 响应，只缓存静态应用资源。
 - API 包含速率限制、请求体限制、CORS 白名单和安全响应头。
 
-安全问题请按 [SECURITY.md](./SECURITY.md) 私下报告。
+安全问题处理说明见 [SECURITY.md](./SECURITY.md)。
 
 ## 验证
 
@@ -188,12 +188,10 @@ npm run test:scripts
 npm run test:integration
 
 cd ..
-python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 docker compose config --quiet
-docker compose -f compose.release.yaml config --quiet
 ```
 
-脚本回归需要 Python 3.11+；App 合约测试需要先安装 API 依赖。Android JavaScript 导出不能替代键盘、系统分享和返回键的真机验证。API / Web 的生产依赖与 Web / Expo 的构建依赖应分别审计。
+APK 校验脚本回归需要 Python 3.11+；App 合约测试需要先安装 API 依赖。Android JavaScript 导出不能替代键盘、系统分享和返回键的真机验证。API / Web 的生产依赖与 Web / Expo 的构建依赖应分别审计。
 
 ## 文档
 
@@ -203,12 +201,9 @@ docker compose -f compose.release.yaml config --quiet
 | [用户手册](./docs/user-guide.md) | 页面、题库、学习、AI 与管理操作 |
 | [AI 指南](./docs/ai.md) | 凭据、模型、生成能力、检查机制与排障 |
 | [部署说明](./docs/deployment.md) | Docker、环境变量、数据库与生产部署 |
-| [Release 下载](./docs/release-assets.md) | 预构建包、独立镜像、校验和离线导入 |
 | [运维手册](./docs/operations.md) | 健康检查、日志、备份、恢复和故障定位 |
 | [开发指南](./docs/development.md) | 项目结构、开发环境、测试和编码约定 |
 | [权限说明](./docs/permissions.md) | 用户类型、分类范围和权限模型 |
-| [项目产物清理](./docs/project-maintenance.md) | 清理预览、APK 保留规则与维护脚本验证 |
-| [贡献指南](./CONTRIBUTING.md) | Issue、分支、测试和 PR 约定 |
 | [更新日志](./CHANGELOG.md) | 版本变更记录 |
 
 ## License
