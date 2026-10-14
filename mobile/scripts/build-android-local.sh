@@ -9,7 +9,7 @@ export JAVA_TOOL_OPTIONS='-XX:ActiveProcessorCount=1 -XX:+UseSerialGC'
 mobile_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$mobile_dir/android"
 stage=${1:?Specify bundle, configure, native, compile, dex or package}
-heap=${TGH_GRADLE_HEAP:-512}
+heap=${TGH_GRADLE_HEAP:-768}
 if [[ "$stage" == bundle || "$stage" == configure ]]; then heap=512; fi
 args=(-PreactNativeArchitectures=arm64-v8a -Pexpo.useLegacyPackaging=true
   -Pkotlin.compiler.execution.strategy=in-process

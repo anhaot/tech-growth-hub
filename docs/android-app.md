@@ -1,6 +1,6 @@
 # 安卓 App
 
-`mobile/` 是技术成长站的 Expo SDK 57 / React Native 安卓客户端。当前源码版本为 `1.2.7`，包名为 `com.techgrowthhub.mobile`，本地版本代码为 `10`。App 连接现有 API，与网页共用账号、题库、权限、背题进度和收藏。
+`mobile/` 是技术成长站的 Expo SDK 57 / React Native 安卓客户端。当前源码版本为 `1.2.8`，包名为 `com.techgrowthhub.mobile`，本地版本代码为 `11`。App 连接现有 API，与网页共用账号、题库、权限、背题进度和收藏。
 
 ## 使用与安装
 
@@ -91,7 +91,7 @@ NODE_ENV=production ./gradlew :app:assembleRelease -PreactNativeArchitectures=ar
 
 APK 位于 `mobile/android/app/build/outputs/apk/release/app-release.apk`。生成的原生目录不提交到仓库；修改原生配置或依赖后重新生成，配置应维护在 `app.config.ts` 或配置插件中。本地预览默认使用生成的调试签名，正式分发应配置自己的签名。需要其他架构时调整 `reactNativeArchitectures`。
 
-已有原生目录时，可从 `mobile/` 使用 `bash scripts/build-android-local.sh package` 进行 ARM64 串行构建。此脚本限制 Gradle、Metro 和 C++ 编译并发；运行前应配置自己的 SDK 与 Java 环境，堆大小可用 `TGH_GRADLE_HEAP` 调整。内存受限时串行运行测试、导出和原生构建。
+已有原生目录时，可从 `mobile/` 使用 `bash scripts/build-android-local.sh package` 进行 ARM64 构建。此脚本限制 Gradle 和 Metro 并发；运行前应配置自己的 SDK 与 Java 环境，完整打包的 Java 堆默认使用 768 MiB，可用 `TGH_GRADLE_HEAP` 调整。单独生成 bundle 或配置 CMake 时固定使用 512 MiB；C++ 并发由原生构建工具决定；已有各模块 CMake 配置时，可使用 `native` 和 `native-deps` 阶段串行编译。内存受限时串行运行测试、导出和原生构建。
 
 也可使用 EAS Build。`eas.json` 提供内部 APK 配置和正式 AAB 配置：
 

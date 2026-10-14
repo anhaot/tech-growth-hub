@@ -102,8 +102,8 @@ source_checks = {
     'contextModelMenu': 'ModelSheet' in source_content('src/screens/StudySettings.tsx') and 'ModelSheet' in source_content('src/screens/ModelEditor.tsx'),
     'rejectEmptyAnswer': 'answerText' in source_content('src/api.ts') and '没有返回回答正文' in source_content('src/api.ts'),
     'modelInConversation': '切换答疑模型' in source_content('src/screens/AI.tsx'),
-    'literalCommandQuotes': 'typographer: false' in source_content('src/study-markdown-parser.ts'),
-    'formattedQuestionTitle': 'variant="title"' in source_content('src/screens/Reader.tsx'),
+    'literalCommandQuotes': 'typographer: false' in source_content('src/markdown-format.ts'),
+    'readerContentWithoutTitle': 'testID="question-content"' in source_content('src/screens/Reader.tsx') and 'testID="question-title"' not in source_content('src/screens/Reader.tsx'),
     'indentedCodeScroll': 'code_block:' in source_content('src/components/Markdown.tsx'),
     'nativeModelEditor': 'ModelEditorScreen' in source_content('src/screens/ModelEditor.tsx') and 'saveAIConfig' in source_content('src/screens/ModelEditor.tsx'),
     'failedModelReadProtected': '!loaded' in source_content('src/screens/ModelEditor.tsx') and 'setRefresh' in source_content('src/screens/ModelEditor.tsx'),
@@ -120,6 +120,8 @@ source_checks.update({
     'archiveAndConversationDeletion': 'setMessages((current) => current.filter' in source_content('src/screens/AI.tsx'),
 })
 source_checks['fieldAISupplement'] = 'AI补充${label}' in source_content('src/components/QuestionActions.tsx') and 'api.supplementQuestion' in source_content('src/components/QuestionActions.tsx') and '采用补充结果' in source_content('src/components/QuestionActions.tsx')
+for suffix in ['src/screens/Reader.tsx', 'src/components/Markdown.tsx', 'src/markdown-format.ts', 'src/study-markdown-parser.ts']:
+    source_checks[f'currentSource:{suffix}'] = source_content(suffix).strip() == (root / 'mobile' / suffix).read_text().strip()
 require(all(source_checks.values()), f'Embedded source checks failed: {[name for name, passed in source_checks.items() if not passed]}')
 with apk.open('rb') as stream:
     sha = hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -132,7 +134,7 @@ except ValueError:
 record = {**manifest, 'bytes': apk.stat().st_size, 'sha256': sha, 'architectures': architectures,
           'modules': modules, 'bundleBytes': len(bundle), 'embeddedSourceChecks': source_checks,
           'certificateSHA256': certificate, 'signatureMatchesPreviousRelease': bool(previous),
-          'deviceVerified': False, 'cpuLimitCores': 1, 'gradleAndMetroWorkers': 1, 'ninjaJobs': 1,
+          'deviceVerified': False,
           'buildLogs': [name for name in [f'build-v{version}-bundle.log', f'build-v{version}-package.log'] if (apk.parent / name).exists()]}
 (apk.parent / f'apk-v{version}-verification.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
 print(json.dumps(record, ensure_ascii=False, indent=2))

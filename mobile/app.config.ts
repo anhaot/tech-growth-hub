@@ -3,14 +3,14 @@ import type { ExpoConfig } from "expo/config";
 const config: ExpoConfig = {
   name: "技术成长站",
   slug: "tech-growth-hub",
-  version: "1.2.7",
+  version: "1.2.8",
   icon: "./assets/icon.png",
   scheme: "techgrowthhub",
   orientation: "default",
   userInterfaceStyle: "light",
   android: {
     package: "com.techgrowthhub.mobile",
-    versionCode: 10,
+    versionCode: 11,
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#2563eb",
