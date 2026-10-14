@@ -555,12 +555,9 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
               <div className="mt-2 h-4 w-64 max-w-full rounded bg-slate-200" />
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:w-[500px]">
-            <div className="h-12 rounded-xl bg-slate-200" />
-            <div className="h-12 rounded-xl bg-slate-200" />
-          </div>
+          <div className="h-12 w-64 rounded-xl bg-slate-200" />
         </div>
-        <div className="hidden h-20 rounded-2xl border border-slate-100 bg-white lg:block" />
+        <div className="h-14 rounded-2xl border border-slate-100 bg-white" />
         <div className="h-96 rounded-2xl border border-slate-100 bg-white" />
       </div>
     );
@@ -584,7 +581,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
               </div>
           </div>
         </div>
-          <div className="grid w-[500px] grid-cols-2 gap-3">
+          <div className="w-64">
             <div className="relative">
               <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
               <select

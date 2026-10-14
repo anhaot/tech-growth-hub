@@ -343,7 +343,7 @@ export const InterviewCapturePage: React.FC = () => {
             <fieldset disabled={busy} className="space-y-3">
               <textarea value={draft.content} onChange={(event) => updateDraft(draft.id, { content: event.target.value })} onBlur={() => persistDraft(draft.id)} rows={3} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-base outline-none focus:border-violet-500" aria-label={`第 ${index + 1} 题题目`} />
               <textarea value={draft.answer} onChange={(event) => updateDraft(draft.id, { answer: event.target.value })} onBlur={() => persistDraft(draft.id)} rows={5} className="w-full rounded-xl border border-slate-200 bg-emerald-50/40 px-3 py-2 text-base outline-none focus:border-emerald-500" placeholder="答案可留空，稍后使用 AI 生成" aria-label={`第 ${index + 1} 题答案`} />
-              <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
+              <div className="max-w-xs">
                 <select value={draft.difficulty} onChange={(event) => updateDraft(draft.id, { difficulty: event.target.value as InterviewDraft['difficulty'] })} onBlur={() => persistDraft(draft.id)} className="select-field min-h-11 px-3 pr-9">
                   <option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option>
                 </select>

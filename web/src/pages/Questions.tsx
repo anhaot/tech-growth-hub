@@ -28,6 +28,7 @@ import {
   Check,
   Sparkles,
   FileText,
+  History,
   MoreHorizontal,
 } from 'lucide-react';
 
@@ -708,7 +709,7 @@ export const QuestionsPage: React.FC = () => {
                         </td>
                         <td className="py-4 px-4">
                           <div className="flex items-center gap-1">
-                            <button title="版本历史" aria-label={`版本历史：${question.title}`} onClick={() => setHistoryQuestion(question)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg text-xs">历史</button>
+                            <button title="版本历史" aria-label={`版本历史：${question.title}`} onClick={() => setHistoryQuestion(question)} className="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100"><History size={18} /></button>
                             {canAIPolish ? (
                               <button
                                 onClick={() => openAnswerDraftModal(question)}
