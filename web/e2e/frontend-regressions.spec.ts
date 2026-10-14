@@ -51,7 +51,7 @@ test('AI 答案通过使用权限选择独立模型，版本切换不会误存�
   await expect(modal).toBeHidden();
   const saved = await getQuestion(request, login.token, question.id);
   expect(saved.answer).toBe('quick新答案');
-  expect(JSON.parse(saved.tags)).toEqual(['original']);
+  expect(JSON.parse(saved.tags)).toEqual([]);
   expect(configRequests).toBe(0);
 });
 
@@ -311,7 +311,7 @@ test('学习题库缩减后跨页跳转回到有效题号，即使目标页仍�
   await page.locator('input[aria-label="跳转题号"]:visible').fill('150');
   await page.getByRole('button', { name: '跳转', exact: true }).click();
   await expect(page.getByTestId('learning-question-content')).toContainText('缩减题库第 105 题');
-  await expect(page.getByRole('progressbar', { name: '当前浏览位置' })).toHaveAttribute('aria-valuenow', '100');
+  await expect(page.getByRole('spinbutton', { name: '跳转题号' })).toHaveValue('105');
 });
 
 test('其他页面阻塞离线数据库升级时提示重试，解除占用后仍能保存草稿', async ({ page, request }) => {

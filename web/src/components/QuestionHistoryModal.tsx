@@ -5,10 +5,9 @@ import { categoryApi, questionApi } from '@/api';
 import { Category, Question, QuestionVersion } from '@/types';
 import { useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
-import { parseQuestionTags } from '@/lib/questionTags';
 
 interface Props { question: Question | null; onClose: () => void; onRestored: (question: Question) => void }
-const fields = [['title', '标题'], ['content', '题干'], ['answer', '答案'], ['explanation', '解析'], ['difficulty', '难度'], ['category_id', '分类'], ['tags', '标签']] as const;
+const fields = [['title', '标题'], ['content', '题干'], ['answer', '答案'], ['explanation', '解析'], ['difficulty', '难度'], ['category_id', '分类']] as const;
 export default function QuestionHistoryModal({ question, onClose, onRestored }: Props) {
   const { user } = useAuthStore();
   const [categories, setCategories] = useState<Category[]>([]);
@@ -52,7 +51,6 @@ export default function QuestionHistoryModal({ question, onClose, onRestored }: 
   const displayValue = (field: typeof fields[number][0], value: Question) => {
     if (field === 'difficulty') return ({ easy: '简单', medium: '中等', hard: '困难' })[value.difficulty] || value.difficulty;
     if (field === 'category_id') return value.category_id ? categories.find((category) => category.id === value.category_id)?.name || '已删除或不可见的分类' : '无分类';
-    if (field === 'tags') return parseQuestionTags(value.tags).join('、') || '无标签';
     return value[field] || '（空）';
   };
   const restore = async () => {
@@ -80,7 +78,7 @@ export default function QuestionHistoryModal({ question, onClose, onRestored }: 
         <p className="text-sm text-gray-500">选择历史版本查看差异。回退会生成新版本，可再次恢复到回退前的内容。</p>
         {loading ? <p role="status">正在读取版本…</p> : error ? <p role="alert" className="text-red-600">{error}</p> : <>
           <div className="flex flex-wrap gap-2">{versions.map((version) => <button key={version.version} onClick={() => { setSelected(version); setConfirming(false); }} className={`rounded-lg border px-3 py-2 text-sm ${version.version === selected?.version ? 'border-primary-500 bg-primary-50' : 'border-gray-200'}`}>
-            v{version.version} · {version.source.startsWith('restore:') ? `回退自 v${version.source.split(':')[1]}` : version.source === 'initial' ? '初始记录' : version.source === 'merge' ? '合并' : version.source === 'ai-polish' ? 'AI 润色' : version.source === 'ai-answer' ? 'AI 答案' : version.source === 'ai-tags' ? 'AI 标签' : version.source === 'tags' ? '标签治理' : version.source.startsWith('script:') ? '脚本修订' : '修改'}<br />{new Date(version.created_at).toLocaleString('zh-CN')}
+            v{version.version} · {version.source.startsWith('restore:') ? `回退自 v${version.source.split(':')[1]}` : version.source === 'initial' ? '初始记录' : version.source === 'merge' ? '合并' : version.source === 'ai-polish' ? 'AI 润色' : version.source === 'ai-answer' ? 'AI 答案' : version.source.startsWith('script:') ? '脚本修订' : '修改'}<br />{new Date(version.created_at).toLocaleString('zh-CN')}
           </button>)}</div>
           <div className="flex justify-between text-sm"><button disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页版本</button><span>{page}/{totalPages || 1}</span><button disabled={page >= totalPages} onClick={() => setPage(page + 1)}>下一页版本</button></div>
           {selected ? <p className="text-xs text-gray-500">操作者：{selected.actor_name || (selected.actor_id ? '操作者信息不可用' : '系统或初始记录')}；仅显示当前授权分类的历史版本。</p> : null}
@@ -90,7 +88,7 @@ export default function QuestionHistoryModal({ question, onClose, onRestored }: 
               <div className="grid gap-3 sm:grid-cols-2 mt-2 text-sm"><div><p className="text-gray-500 mb-1">当前内容</p><pre className="whitespace-pre-wrap break-words font-sans">{displayValue(field, question)}</pre></div><div><p className="text-gray-500 mb-1">v{selected?.version} 内容</p><pre className="whitespace-pre-wrap break-words font-sans">{displayValue(field, snapshot!)}</pre></div></div>
             </div>;
           })}</div> : <p>该版本数据无法读取。</p>}
-          {confirming ? <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-3"><p>确认将标题、题干、答案、解析、分类、难度和标签全部回退到 v{selected?.version}？收藏和学习进度不受影响。</p><div className="flex gap-3"><button className="btn-primary" disabled={saving} onClick={restore}>{saving ? '正在回退…' : '确认回退'}</button><button disabled={saving} onClick={() => setConfirming(false)}>取消</button></div></div> : canRestore && snapshot && selected?.version !== (question.revision || 1) ? <button className="btn-primary" onClick={() => setConfirming(true)}>回退到此版本</button> : null}
+          {confirming ? <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-3"><p>确认将标题、题干、答案、解析、分类和难度全部回退到 v{selected?.version}？收藏和学习进度不受影响。</p><div className="flex gap-3"><button className="btn-primary" disabled={saving} onClick={restore}>{saving ? '正在回退…' : '确认回退'}</button><button disabled={saving} onClick={() => setConfirming(false)}>取消</button></div></div> : canRestore && snapshot && selected?.version !== (question.revision || 1) ? <button className="btn-primary" onClick={() => setConfirming(true)}>回退到此版本</button> : null}
         </>}
       </div>
     </div>

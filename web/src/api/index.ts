@@ -13,8 +13,6 @@ import {
   ImportPreview,
   AIStatus,
   UserPermissions,
-  TagSummary,
-  TagHealthReport,
   DatabaseProfilesResponse,
   DatabaseValidationReport,
   DatabaseProfile,
@@ -83,85 +81,67 @@ api.interceptors.response.use(
 export const authApi = {
   register: (data: { username: string; email: string; password: string }) =>
     api.post<{ user: User; token: string }>('/auth/register', data),
-  
+
   login: (data: { username: string; password: string }) =>
     api.post<{ user: User; token: string }>('/auth/login', data),
 
   logout: () => api.post<{ message: string }>('/auth/logout', {}),
   refreshSession: () => api.post<{ message: string }>('/auth/session', {}),
-  
+
   getMe: () => api.get<User>('/auth/me'),
-  
+
   updateProfile: (data: { username?: string; email?: string; password?: string }) =>
     api.put<User>('/auth/profile', data),
 };
 
 export const categoryApi = {
   getAll: () => api.get<Category[]>('/categories'),
-  
+
   create: (data: { name: string; description?: string; parentId?: string }) =>
     api.post<Category>('/categories', data),
-  
+
   update: (id: string, data: { name?: string; description?: string; parentId?: string }) =>
     api.put<Category>(`/categories/${id}`, data),
-  
+
   delete: (id: string) => api.delete(`/categories/${id}`),
 };
 
 export const questionApi = {
   removeBookmarks: (ids: string[], mode: 'study' | 'quiz') =>
     api.post<{ removedCount: number }>('/questions/bookmarked/remove', { ids, mode }),
-  getPosition: (id: string, params?: { categoryId?: string; tags?: string[] }) => api.get<{ index: number | null }>(`/questions/position/${id}`, { params }),
+  getPosition: (id: string, params?: { categoryId?: string }) => api.get<{ index: number | null }>(`/questions/position/${id}`, { params }),
   getVersions: (id: string, page = 1) => api.get<PaginatedResult<QuestionVersion>>(`/questions/${id}/versions`, { params: { page } }),
   restoreVersion: (id: string, version: number, expectedRevision: number) => api.post<Question>(`/questions/${id}/versions/${version}/restore`, { expectedRevision }),
   startDuplicateScan: () => api.post<{ id: string }>('/questions/duplicates/scan'),
   getDuplicateScan: (id: string, page = 1, memberPage = 1) => api.get<DuplicateScanResult>(`/questions/duplicates/scan/${id}`, { params: { page, memberPage } }),
-  getAll: (params?: { page?: number; pageSize?: number; categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] }) =>
+  getAll: (params?: { page?: number; pageSize?: number; categoryId?: string; difficulty?: string; keyword?: string }) =>
     api.get<PaginatedResult<Question>>('/questions', { params }),
-
-  getTags: (params?: { categoryId?: string; difficulty?: string; keyword?: string }) =>
-    api.get<TagSummary[]>('/questions/tags', { params }),
-
-  getTagHealth: () =>
-    api.get<TagHealthReport>('/questions/tags/health'),
-
-  renameTag: (fromTag: string, toTag: string) =>
-    api.put<{ updated: number; message: string }>('/questions/tags/rename', { fromTag, toTag }),
-
-  deleteTag: (tagName: string) =>
-    api.delete<{ updated: number; message: string }>('/questions/tags', { data: { tagName } }),
-
-  normalizeTags: () =>
-    api.post<{ updated: number; message: string }>('/questions/tags/normalize', {}),
-
-  batchTags: (data: { ids: string[]; mode: 'add' | 'remove' | 'replace'; tags: string[] }) =>
-    api.post<{ updated: number; message: string }>('/questions/batch-tags', data),
 
   mergeDuplicate: (keepId: string, removeId: string) =>
     api.post<{ message: string; keepId: string; removeId: string }>('/questions/duplicates/merge', { keepId, removeId }),
-  
+
   getBookmarked: (mode?: string) => api.get<Question[]>('/questions/bookmarked', { params: { mode } }),
-  
+
   getLastViewed: (mode?: string, categoryId?: string) => 
     api.get<LearningProgress | null>('/questions/last-viewed', { params: { mode, categoryId } }),
 
   resetLearningProgress: () =>
     api.delete<{ cleared: number; message: string }>('/questions/progress/reset'),
-  
-  create: (data: { title: string; content: string; answer?: string; explanation?: string; difficulty?: string; categoryId?: string; tags?: string[] }) =>
+
+  create: (data: { title: string; content: string; answer?: string; explanation?: string; difficulty?: string; categoryId?: string }) =>
     api.post<Question>('/questions', data),
-  
-  update: (id: string, data: Partial<{ source: 'edit' | 'ai-polish' | 'ai-answer'; expectedRevision: number; title: string; content: string; answer: string; explanation: string; difficulty: string; categoryId: string; tags: string[] }>) =>
+
+  update: (id: string, data: Partial<{ source: 'edit' | 'ai-polish' | 'ai-answer'; expectedRevision: number; title: string; content: string; answer: string; explanation: string; difficulty: string; categoryId: string }>) =>
     api.put<Question>(`/questions/${id}`, data),
-  
+
   delete: (id: string) => api.delete(`/questions/${id}`),
-  
+
   batchDelete: (ids: string[]) => api.post('/questions/batch-delete', { ids }),
-  
+
   clearAll: () => api.delete('/questions/clear-all'),
-  
+
   export: (categoryId?: string) => api.get<{ questions: any[]; total: number }>('/questions/export', { params: { categoryId } }),
-  
+
   saveProgress: (questionId: string, data: { mode: string; isBookmarked?: boolean }) =>
     api.post<LearningProgress>(`/questions/${questionId}/progress`, data),
 };
@@ -175,8 +155,8 @@ export const importApi = {
   previewText: (questions: unknown[], categoryId?: string) => api.post<ImportPreview>('/import/preview/text', { questions, categoryId }),
   getPreview: (id: string, page: number) => api.get<ImportPreview>(`/import/preview/${id}`, { params: { page } }),
   commitPreview: (id: string, excludedRows: number[]) => api.post<ImportResult>(`/import/preview/${id}/commit`, { excludedRows }),
-  
-  importText: (questions: Array<{ title: string; content: string; answer: string; explanation?: string; difficulty?: string; tags?: string[] }>, categoryId?: string) =>
+
+  importText: (questions: Array<{ title: string; content: string; answer: string; explanation?: string; difficulty?: string }>, categoryId?: string) =>
     api.post<ImportResult>('/import/text', { questions, categoryId }),
 };
 
@@ -184,10 +164,10 @@ export const aiApi = {
   supplementQuestion: (data: { questionId: string; field: 'answer' | 'explanation'; answer: string; explanation: string; title?: string; content?: string; provider?: string }, signal?: AbortSignal) =>
     api.post<{ result: string; truncated?: boolean }>('/ai/supplement', data, { timeout: 200000, signal }),
   getStatus: () => api.get<AIStatus>('/ai/status'),
-  
+
   updateSettings: (data: { enabled?: boolean; defaultProvider?: string }) =>
     api.put<AIStatus>('/ai/settings', data),
-  
+
   getConfigs: () => api.get<AIConfig[]>('/ai/config'),
 
   getCredentials: () => api.get<AICredential[]>('/ai/credentials'),
@@ -207,7 +187,7 @@ export const aiApi = {
     apiKey?: string;
     isCustom?: boolean;
   }) => api.post<{ models: AIModelInfo[] }>('/ai/models', data),
-  
+
   createConfig: (data: { 
     provider: string; 
     displayName?: string;
@@ -218,7 +198,7 @@ export const aiApi = {
     sourceConfigId?: string;
     credentialId?: string;
   }) => api.post<AIConfig>('/ai/config', data),
-  
+
   updateConfig: (id: string, data: { 
     provider?: string; 
     displayName?: string;
@@ -228,28 +208,28 @@ export const aiApi = {
     isCustom?: boolean;
     credentialId?: string;
   }) => api.put<AIConfig>(`/ai/config/${id}`, data),
-  
+
   deleteConfig: (id: string) => api.delete(`/ai/config/${id}`),
 
   deleteInvalidConfigs: () => api.delete<{ deleted: number }>('/ai/config/invalid'),
-  
+
   setActiveConfig: (id: string) => api.put(`/ai/config/${id}/active`),
 
   checkConfig: (id: string) =>
     api.post<AIModelCheckResult>(`/ai/config/${id}/check`),
-  
+
   analyze: (questionId: string, provider?: string) =>
     api.post<{ result: string }>('/ai/analyze', { questionId, provider }),
-  
+
   expand: (questionId: string, provider?: string) =>
     api.post<{ result: string }>('/ai/expand', { questionId, provider }),
-  
+
   recommend: (questionId: string, provider?: string) =>
     api.post<{ result: string }>('/ai/recommend', { questionId, provider }),
-  
+
   generate: (questionId: string, count?: number, provider?: string) =>
     api.post<{ result: string }>('/ai/generate', { questionId, count, provider }),
-  
+
   chat: (questionId: string, message: string, provider?: string) =>
     api.post<{ result: string }>('/ai/chat', { questionId, message, provider }),
 
@@ -268,7 +248,6 @@ export const aiApi = {
       answer: string;
       explanation?: string;
       difficulty?: 'easy' | 'medium' | 'hard';
-      tags?: string[];
     }>;
     raw: string;
   }>('/ai/batch-generate', data),
@@ -282,7 +261,6 @@ export const aiApi = {
         answer: string;
         explanation: string;
         difficulty: 'easy' | 'medium' | 'hard';
-        tags: string[];
       };
       raw: string;
     }>('/ai/polish-question', { questionId, mode, provider }),
@@ -293,7 +271,6 @@ export const aiApi = {
       draft: {
         answer: string;
         explanation: string;
-        tags: string[];
         mode: 'quick' | 'practice' | 'teaching';
       };
       raw: string;
@@ -309,33 +286,25 @@ export const aiApi = {
       answer: string;
       explanation: string;
       difficulty: 'easy' | 'medium' | 'hard';
-      tags: string[];
     }>;
   }>('/ai/answer-drafts/raw', data),
 
-  batchGenerateTags: (data: { ids: string[]; mode?: 'add' | 'replace'; provider?: string }) =>
-    api.post<{
-      updated: number;
-      total: number;
-      message: string;
-      results: Array<{ questionId: string; tags: string[] }>;
-    }>('/ai/batch-tags', data),
 };
 
 export const adminApi = {
   getInfo: () => api.get<DatabaseInfo>('/admin/info'),
-  
+
   getStats: () => api.get<{ questionCount: number; categoryCount: number }>('/admin/stats'),
-  
+
   deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
 
-  getSettings: () => api.get<{ allowRegister: boolean; tagAliases?: Record<string, string>; loginSessionDuration: string }>('/admin/settings'),
-  
+  getSettings: () => api.get<{ allowRegister: boolean; loginSessionDuration: string }>('/admin/settings'),
+
   updateSetting: (key: string, value: string) =>
     api.put(`/admin/settings/${key}`, { value }),
-  
+
   getPublicSettings: () => api.get<{ allowRegister: boolean }>('/admin/public'),
-  
+
   getAllUsers: () => api.get<User[]>('/admin/users'),
 
   getUserCategories: (id: string) => api.get<Category[]>(`/admin/users/${id}/categories`),
@@ -351,10 +320,10 @@ export const adminApi = {
     permissions?: UserPermissions;
   }) =>
     api.post<User>('/admin/users', data),
-  
+
   updateUserRole: (id: string, role: string) =>
     api.put<User>(`/admin/users/${id}/role`, { role }),
-  
+
   updateUser: (id: string, data: {
     username?: string;
     email?: string;

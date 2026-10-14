@@ -31,7 +31,7 @@ MariaDB 备份恢复回归使用 `cd api && npm run test:mysql`。须提供 `MYS
 - `src/services`
   - AI 等服务层逻辑
 - `src/utils`
-  - 标签、Markdown、AI 安全等工具
+  - Markdown、AI 安全等工具
 - `tests`
   - 后端安全与回归测试
 
@@ -254,7 +254,7 @@ npm run export:android
 
 定位：
 
-- 只生成答案、解析和标签建议
+- 只生成答案和解析
 - 不动题干、标题、难度
 
 主要文件：
@@ -409,7 +409,7 @@ cd web && npm run e2e
 - `GET /api/questions/:id/versions?page=1`：每页 20 个版本，可查看题目且历史分类在授权范围内才返回。
 - `POST /api/questions/:id/versions/:version/restore`：请求体 `{ "expectedRevision": 2 }`；需要内容和属性编辑权限，成功生成新版本。并发冲突返回 409。
 - `PUT /api/questions/:id`：支持 `expectedRevision` 与 `source`（`edit`、`ai-polish`、`ai-answer`），Web 保存均携带当前版本。
-- `GET /api/questions/position/:id?categoryId=...&tags[]=...`：返回筛选题集内从零开始的位置，不可见或不匹配时为 null。
+- `GET /api/questions/position/:id?categoryId=...`：返回筛选题集内从零开始的位置，不可见或不匹配时为 null。
 - `POST /api/questions/duplicates/scan`：启动整个授权题库扫描，返回任务 ID。
 - `GET /api/questions/duplicates/scan/:jobId?page=1&memberPage=1`：进度与结果；结果页每页 20 条，同标题组成员另按 20 道分页。
 - 旧 `/duplicates/similar` 接口保留，但新页面使用后台任务和轮询。

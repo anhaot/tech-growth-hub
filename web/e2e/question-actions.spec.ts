@@ -50,3 +50,42 @@ test('学习页可修改答案并删除当前题，手机端菜单可用', async
   await expect(page.getByText('暂无题目')).toBeVisible();
   expect((await request.get(`${apiBaseUrl}/questions/${q.id}`, { headers: { Authorization: `Bearer ${login.token}` } })).status()).toBe(404);
 });
+
+test('分类筛选贯穿题库、学习和收藏，设置只保留分类管理', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_category_only`);
+  const login = await apiLogin(request, user.username, user.password);
+  const category = await request.post(`${apiBaseUrl}/categories`, { headers: { Authorization: `Bearer ${login.token}` }, data: { name: '分类回归' } });
+  expect(category.ok()).toBeTruthy();
+  const { id: categoryId } = await category.json();
+  const categorized = await createQuestion(request, login.token, { title: '有分类题', content: '有分类题干', answer: '答案', categoryId });
+  const plain = await createQuestion(request, login.token, { title: '未分类题', content: '未分类题干', answer: '答案' });
+  for (const question of [categorized, plain]) {
+    const bookmark = await request.post(`${apiBaseUrl}/questions/${question.id}/progress`, { headers: { Authorization: `Bearer ${login.token}` }, data: { mode: 'study', isBookmarked: true } });
+    expect(bookmark.ok()).toBeTruthy();
+  }
+  await primeAuth(page, login);
+  await page.goto('/questions');
+  await expect(page.getByPlaceholder('标签筛选')).toHaveCount(0);
+  await page.getByRole('combobox').filter({ has: page.locator(`option[value="${categoryId}"]`) }).selectOption(categoryId);
+  await expect(page.getByText('有分类题干', { exact: true }).last()).toBeVisible();
+  await expect(page.getByText('未分类题干', { exact: true })).toHaveCount(0);
+  await page.goto('/study');
+  await page.getByRole('combobox').filter({ has: page.locator(`option[value="${categoryId}"]`) }).selectOption(categoryId);
+  await expect(page.getByTestId('learning-question-content')).toContainText('有分类题干');
+  await expect(page.getByPlaceholder('按标签学习')).toHaveCount(0);
+  await page.goto('/bookmarks');
+  const filter = page.getByRole('combobox', { name: '收藏分类' });
+  await filter.selectOption(categoryId);
+  await expect(page.getByText('有分类题干', { exact: true })).toBeVisible();
+  await expect(page.getByText('未分类题干', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '全选当前列表', exact: true }).click();
+  await expect(page.getByText('已选 1 道')).toBeVisible();
+  await filter.selectOption('uncategorized');
+  await expect(page.getByText('未分类题干', { exact: true })).toBeVisible();
+  await expect(page.getByText('已选 0 道')).toBeVisible();
+  await page.goto('/settings');
+  await page.getByTestId('settings-tab-categories').click();
+  await expect(page.getByRole('heading', { name: '分类管理', exact: true })).toBeVisible();
+  await expect(page.getByText('分类回归', { exact: true })).toBeVisible();
+  await expect(page.getByText(/标签健康|标签管理|标签别名/)).toHaveCount(0);
+});

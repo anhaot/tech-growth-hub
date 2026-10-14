@@ -31,7 +31,6 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
   ai_generate: true,
   ai_config_manage: true,
   ai_chat: true,
-  tag_manage: true,
   duplicate_manage: true,
   backup_export: false,
   backup_restore: false,
@@ -67,24 +66,24 @@ function checkLoginLock(ip: string): { locked: boolean; remainingTime?: number }
   if (!attempts) {
     return { locked: false };
   }
-  
+
   if (attempts.lockUntil && Date.now() < attempts.lockUntil) {
     const remainingTime = Math.ceil((attempts.lockUntil - Date.now()) / 1000 / 60);
     return { locked: true, remainingTime };
   }
-  
+
   return { locked: false };
 }
 
 function recordFailedLogin(ip: string): void {
   const attempts = loginAttempts.get(ip) || { count: 0, lockUntil: 0 };
   attempts.count++;
-  
+
   if (attempts.count >= MAX_LOGIN_ATTEMPTS) {
     attempts.lockUntil = Date.now() + LOCK_TIME_MS;
     attempts.count = 0;
   }
-  
+
   loginAttempts.set(ip, attempts);
 }
 
@@ -118,7 +117,7 @@ router.post('/register', authRateLimitMiddleware, async (req, res: Response) => 
     }
 
     const data = registerSchema.parse(req.body);
-    
+
     const sanitizedUsername = sanitizeInput(data.username);
     const sanitizedEmail = sanitizeInput(data.email);
 
@@ -167,7 +166,7 @@ router.post('/register', authRateLimitMiddleware, async (req, res: Response) => 
 
 router.post('/login', authRateLimitMiddleware, async (req, res: Response) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  
+
   try {
     const lockStatus = checkLoginLock(ip);
     if (lockStatus.locked) {
@@ -178,7 +177,7 @@ router.post('/login', authRateLimitMiddleware, async (req, res: Response) => {
     }
 
     const data = loginSchema.parse(req.body);
-    
+
     await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
 
     const user = await db.getUserByUsername(sanitizeInput(data.username));

@@ -110,7 +110,8 @@ export async function createQuestion(request: APIRequestContext, token: string, 
   answer: string;
   explanation?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
-  tags?: string[];
+  tags?: string[]; // Compatibility payload from old clients.
+  categoryId?: string;
 }) {
   const response = await request.post(`${apiBaseUrl}/questions`, {
     headers: {

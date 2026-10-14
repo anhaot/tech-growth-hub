@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuthStore, useAIStore } from '@/store';
 import { categoryApi, aiApi, adminApi, questionApi, authApi } from '@/api';
-import { getTagColorClasses } from '@/lib/tagColors';
-import { getSingleValueSuggestions } from '@/lib/tagSuggestions';
+
 import {
   Category,
   AIConfig,
@@ -12,8 +11,6 @@ import {
   AIStatus,
   User,
   UserPermissions,
-  TagSummary,
-  TagHealthReport,
   DatabaseInfo,
 } from '@/types';
 import { LoadingSpinner } from '@/components/ui';
@@ -24,7 +21,6 @@ import {
   Database,
   Brain,
   FolderOpen,
-  Tags,
   Plus,
   Edit,
   Trash2,
@@ -59,7 +55,6 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
   ai_generate: false,
   ai_config_manage: false,
   ai_chat: false,
-  tag_manage: false,
   duplicate_manage: false,
   backup_export: false,
   backup_restore: false,
@@ -83,7 +78,6 @@ const ADMIN_PERMISSIONS: UserPermissions = {
   ai_generate: true,
   ai_config_manage: true,
   ai_chat: true,
-  tag_manage: true,
   duplicate_manage: true,
   backup_export: true,
   backup_restore: true,
@@ -96,9 +90,8 @@ const PERMISSION_OPTIONS: Array<{ key: keyof UserPermissions; label: string; des
   { key: 'question_view', label: '题目查看', description: '查看题库和题目详情' },
   { key: 'question_create', label: '新增题目', description: '创建单题和写入题库' },
   { key: 'question_edit_content', label: '编辑题目内容', description: '修改题干、答案、解析' },
-  { key: 'question_edit_meta', label: '编辑题目属性', description: '修改分类、难度、标签等元信息' },
+  { key: 'question_edit_meta', label: '编辑题目属性', description: '修改分类、难度等元信息' },
   { key: 'question_delete', label: '删除题目', description: '删除单题和批量删除' },
-  { key: 'question_batch_edit', label: '批量改题', description: '批量标签和批量题目处理' },
   { key: 'question_export', label: '导出题目', description: '导出题库内容' },
   { key: 'category_view', label: '分类查看', description: '查看分类列表和分类结构' },
   { key: 'category_manage', label: '分类管理', description: '新增、编辑、删除分类' },
@@ -108,7 +101,6 @@ const PERMISSION_OPTIONS: Array<{ key: keyof UserPermissions; label: string; des
   { key: 'ai_polish', label: 'AI 润色', description: '对单题进行 AI 润色并写回题库' },
   { key: 'ai_chat', label: 'AI 对话', description: 'AI 助手深度对话和问答' },
   { key: 'ai_config_manage', label: 'AI 配置管理', description: '管理模型、密钥和默认配置' },
-  { key: 'tag_manage', label: '标签管理', description: '批量标签操作、标签整理与维护' },
   { key: 'duplicate_manage', label: '查重功能', description: '精确查重、相似题查重处理' },
   { key: 'backup_export', label: '备份导出', description: '导出完整系统备份' },
   { key: 'backup_restore', label: '备份恢复', description: '恢复完整系统备份' },
@@ -124,12 +116,12 @@ const PERMISSION_GROUPS: Array<{
   {
     title: '题库权限',
     description: '控制题目查看、录入、编辑、删除、批量处理和导出。',
-    keys: ['question_view', 'question_create', 'question_edit_content', 'question_edit_meta', 'question_delete', 'question_batch_edit', 'question_export', 'import_manage'],
+    keys: ['question_view', 'question_create', 'question_edit_content', 'question_edit_meta', 'question_delete', 'question_export', 'import_manage'],
   },
   {
     title: '分类与治理',
-    description: '控制分类、标签和查重等题库治理能力。',
-    keys: ['category_view', 'category_manage', 'tag_manage', 'duplicate_manage'],
+    description: '控制分类和查重等题库治理能力。',
+    keys: ['category_view', 'category_manage', 'duplicate_manage'],
   },
   {
     title: 'AI 权限',
@@ -261,7 +253,7 @@ export const SettingsPage: React.FC = () => {
         </div>
         <div>
           <h1 className="text-xl font-bold text-gray-900 lg:text-2xl">系统设置</h1>
-          <p className="text-xs text-gray-500 lg:text-sm">权限、标签、AI 与数据库配置</p>
+          <p className="text-xs text-gray-500 lg:text-sm">权限、分类、AI 与数据库配置</p>
         </div>
       </div>
 
@@ -271,7 +263,7 @@ export const SettingsPage: React.FC = () => {
           const isActive = activeTab === tab.id;
           const mobileDescription = {
             system: '账号与备份',
-            categories: '分类与标签',
+            categories: '分类管理',
             ai: '模型与密钥',
             database: '连接与迁移',
           }[tab.id];
@@ -340,59 +332,6 @@ interface CategorySettingsProps {
 const CategorySettings: React.FC<CategorySettingsProps> = ({ categories, onRefresh }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [tags, setTags] = useState<TagSummary[]>([]);
-  const [loadingTags, setLoadingTags] = useState(true);
-  const [renamingTag, setRenamingTag] = useState<TagSummary | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [normalizingTags, setNormalizingTags] = useState(false);
-  const [tagAliases, setTagAliases] = useState<Array<{ alias: string; target: string }>>([]);
-  const [aliasForm, setAliasForm] = useState({ alias: '', target: '' });
-  const [savingAliases, setSavingAliases] = useState(false);
-  const [tagHealth, setTagHealth] = useState<TagHealthReport | null>(null);
-  const [loadingTagHealth, setLoadingTagHealth] = useState(true);
-  const matchedAliasTargets = getSingleValueSuggestions(aliasForm.target, tags);
-
-  const fetchTags = async () => {
-    setLoadingTags(true);
-    try {
-      const response = await questionApi.getTags();
-      setTags(response.data);
-    } catch (error) {
-      console.error('Failed to fetch tags:', error);
-    } finally {
-      setLoadingTags(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchTags();
-    fetchTagAliases();
-    fetchTagHealth();
-  }, []);
-
-  const fetchTagAliases = async () => {
-    try {
-      const response = await adminApi.getSettings();
-      const aliases = Object.entries(response.data.tagAliases || {}).map(([alias, target]) => ({ alias, target }));
-      aliases.sort((a, b) => a.alias.localeCompare(b.alias, 'zh-CN'));
-      setTagAliases(aliases);
-    } catch (error) {
-      console.error('Failed to fetch tag aliases:', error);
-    }
-  };
-
-  const fetchTagHealth = async () => {
-    setLoadingTagHealth(true);
-    try {
-      const response = await questionApi.getTagHealth();
-      setTagHealth(response.data);
-    } catch (error) {
-      console.error('Failed to fetch tag health:', error);
-    } finally {
-      setLoadingTagHealth(false);
-    }
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm('确定要删除此分类吗？')) return;
 
@@ -403,115 +342,6 @@ const CategorySettings: React.FC<CategorySettingsProps> = ({ categories, onRefre
     } catch (error) {
       toast.error('删除失败');
     }
-  };
-
-  const handleDeleteTag = async (tagName: string) => {
-    if (!confirm(`确定要删除标签“${tagName}”吗？这会把它从所有题目中移除。`)) return;
-
-    try {
-      const response = await questionApi.deleteTag(tagName);
-      toast.success(response.data.message);
-      fetchTags();
-      fetchTagHealth();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '删除标签失败');
-    }
-  };
-
-  const handleRenameTag = async () => {
-    if (!renamingTag) return;
-
-    const nextName = renameValue.trim();
-    if (!nextName) {
-      toast.error('请输入新标签名');
-      return;
-    }
-
-    try {
-      const response = await questionApi.renameTag(renamingTag.name, nextName);
-      toast.success(response.data.message);
-      setRenamingTag(null);
-      setRenameValue('');
-      fetchTags();
-      fetchTagHealth();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '重命名标签失败');
-    }
-  };
-
-  const renameTagDirectly = async (fromTag: string, toTag: string) => {
-    if (fromTag === toTag) {
-      return;
-    }
-
-    try {
-      const response = await questionApi.renameTag(fromTag, toTag);
-      toast.success(response.data.message);
-      fetchTags();
-      fetchTagHealth();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '合并标签失败');
-    }
-  };
-
-  const handleNormalizeTags = async () => {
-    setNormalizingTags(true);
-    try {
-      const response = await questionApi.normalizeTags();
-      toast.success(response.data.message);
-      fetchTags();
-      fetchTagHealth();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '规范化标签失败');
-    } finally {
-      setNormalizingTags(false);
-    }
-  };
-
-  const saveTagAliases = async (nextAliases: Array<{ alias: string; target: string }>) => {
-    setSavingAliases(true);
-    try {
-      const payload = JSON.stringify(
-        nextAliases.reduce<Record<string, string>>((acc, item) => {
-          const alias = item.alias.trim().toLowerCase();
-          const target = item.target.trim().toLowerCase();
-          if (alias && target && alias !== target) {
-            acc[alias] = target;
-          }
-          return acc;
-        }, {})
-      );
-      await adminApi.updateSetting('tag_aliases', payload);
-      setTagAliases(nextAliases);
-      toast.success('标签别名已保存');
-      fetchTagHealth();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '保存标签别名失败');
-    } finally {
-      setSavingAliases(false);
-    }
-  };
-
-  const handleAddAlias = async () => {
-    const alias = aliasForm.alias.trim().toLowerCase();
-    const target = aliasForm.target.trim().toLowerCase();
-    if (!alias || !target) {
-      toast.error('请填写别名和主标签');
-      return;
-    }
-    if (alias === target) {
-      toast.error('别名和主标签不能相同');
-      return;
-    }
-    const nextAliases = [...tagAliases.filter((item) => item.alias !== alias), { alias, target }]
-      .sort((a, b) => a.alias.localeCompare(b.alias, 'zh-CN'));
-    await saveTagAliases(nextAliases);
-    setAliasForm({ alias: '', target: '' });
-  };
-
-  const handleDeleteAlias = async (alias: string) => {
-    const nextAliases = tagAliases.filter((item) => item.alias !== alias);
-    await saveTagAliases(nextAliases);
   };
 
   return (
@@ -575,261 +405,6 @@ const CategorySettings: React.FC<CategorySettingsProps> = ({ categories, onRefre
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
-          <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg">
-            <Tags className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">标签健康检查</h2>
-            <p className="text-sm text-gray-500">查看低频标签、已配置别名和疑似重复标签</p>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-6">
-          {loadingTagHealth ? (
-            <div className="flex justify-center py-10">
-              <LoadingSpinner />
-            </div>
-          ) : tagHealth ? (
-            <>
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">低频标签</h3>
-                {tagHealth.lowFrequency.length === 0 ? (
-                  <p className="text-sm text-gray-500">没有低频标签。</p>
-                ) : (
-                  <div className="grid gap-3">
-                    {tagHealth.lowFrequency.slice(0, 20).map((tag) => (
-                      <div key={tag.name} className="flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
-                        <div className="flex items-center gap-2 text-sm text-amber-800">
-                          <span className="font-medium">{tag.name}</span>
-                          <span className="text-xs text-amber-600">仅 {tag.count} 道题</span>
-                        </div>
-                        <button
-                          onClick={() => handleDeleteTag(tag.name)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-amber-200 text-amber-700 text-sm hover:bg-amber-100 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                          删除标签
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">已配置别名</h3>
-                {tagHealth.aliased.length === 0 ? (
-                  <p className="text-sm text-gray-500">暂无别名规则。</p>
-                ) : (
-                  <div className="grid gap-3">
-                    {tagHealth.aliased.slice(0, 20).map((item) => (
-                      <div key={item.alias} className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
-                        <span className="font-medium">{item.alias}</span>
-                        <span className="mx-2 text-gray-400">{'->'}</span>
-                        <span className="font-medium text-violet-700">{item.target}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">疑似重复标签</h3>
-                {tagHealth.similarPairs.length === 0 ? (
-                  <p className="text-sm text-gray-500">暂未发现疑似重复标签。</p>
-                ) : (
-                  <div className="grid gap-3">
-                    {tagHealth.similarPairs.map((pair, index) => (
-                      <div key={`${pair.left}-${pair.right}-${index}`} className="rounded-xl border border-gray-200 bg-white p-4">
-                        <div className="flex items-center gap-2 text-sm flex-wrap">
-                          <span className="inline-flex px-3 py-1 rounded-full bg-white border border-gray-200 text-gray-700">{pair.left}</span>
-                          <span className="text-gray-400">{'vs'}</span>
-                          <span className="inline-flex px-3 py-1 rounded-full bg-white border border-gray-200 text-gray-700">{pair.right}</span>
-                        </div>
-                        <p className="mt-2 text-xs text-gray-500">原因：{pair.reason}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            onClick={() => renameTagDirectly(pair.right, pair.left)}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200 text-violet-700 text-sm hover:bg-violet-100 transition-colors"
-                          >
-                            合并为 {pair.left}
-                          </button>
-                          <button
-                            onClick={() => renameTagDirectly(pair.left, pair.right)}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200 text-violet-700 text-sm hover:bg-violet-100 transition-colors"
-                          >
-                            合并为 {pair.right}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setAliasForm({ alias: pair.left, target: pair.right });
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 text-sm hover:bg-gray-50 transition-colors"
-                          >
-                            设为别名
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <p className="text-sm text-gray-500">标签健康检查暂不可用。</p>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
-          <div className="p-2 bg-gradient-to-br from-sky-500 to-cyan-600 rounded-lg">
-            <Tags className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">标签管理</h2>
-            <p className="text-sm text-gray-500">重命名、合并或删除题目标签</p>
-          </div>
-          <div className="ml-auto">
-            <button
-              onClick={handleNormalizeTags}
-              disabled={normalizingTags}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50"
-            >
-              <Tags size={16} />
-              {normalizingTags ? '规范化中...' : '一键规范化'}
-            </button>
-          </div>
-        </div>
-
-        <div className="p-6">
-          {loadingTags ? (
-            <div className="flex justify-center py-10">
-              <LoadingSpinner />
-            </div>
-          ) : tags.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="p-4 bg-sky-50 rounded-2xl inline-flex mb-4">
-                <Tags size={32} className="text-sky-400" />
-              </div>
-              <p className="text-gray-600">暂无标签</p>
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {tags.map((tag) => (
-                <div key={tag.name} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <span className={`inline-flex px-3 py-1.5 rounded-full text-sm font-medium border ${getTagColorClasses(tag.name)}`}>
-                      {tag.name}
-                    </span>
-                    <span className="text-sm text-gray-500">关联 {tag.count} 道题</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setRenamingTag(tag);
-                        setRenameValue(tag.name);
-                      }}
-                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    >
-                      <Edit size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTag(tag.name)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
-          <div className="p-2 bg-gradient-to-br from-violet-500 to-fuchsia-600 rounded-lg">
-            <Tags className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">标签别名</h2>
-            <p className="text-sm text-gray-500">把常见别名自动归并到主标签，例如 js {'->'} javascript</p>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-4">
-          <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-            <input
-              type="text"
-              value={aliasForm.alias}
-              onChange={(e) => setAliasForm((prev) => ({ ...prev, alias: e.target.value }))}
-              placeholder="别名，例如 js"
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 focus:bg-white transition-all"
-            />
-            <input
-              type="text"
-              value={aliasForm.target}
-              onChange={(e) => setAliasForm((prev) => ({ ...prev, target: e.target.value }))}
-              placeholder="主标签，例如 javascript"
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 focus:bg-white transition-all"
-            />
-            <button
-              onClick={handleAddAlias}
-              disabled={savingAliases}
-              className="px-4 py-3 bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl text-white hover:from-violet-600 hover:to-fuchsia-700 transition-all disabled:opacity-50"
-            >
-              添加别名
-            </button>
-          </div>
-          {matchedAliasTargets.length > 0 ? (
-            <div className="-mt-1 rounded-xl border border-gray-200 bg-white p-2">
-              <div className="flex flex-wrap gap-2">
-                {matchedAliasTargets.map((tag) => (
-                  <button
-                    key={tag.name}
-                    type="button"
-                    onClick={() => setAliasForm((prev) => ({ ...prev, target: tag.name }))}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-700 transition-colors hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    <span>{tag.name}</span>
-                    <span className="text-[11px] text-gray-400">{tag.count}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {tagAliases.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-gray-500">
-              暂无别名规则。添加后，新建题目、导入题目、AI 生题和一键规范化都会自动应用这些规则。
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {tagAliases.map((item) => (
-                <div key={item.alias} className="flex items-center justify-between rounded-xl bg-gray-50 p-4">
-                  <div className="flex items-center gap-3 text-sm">
-                    <span className="inline-flex px-3 py-1.5 rounded-full bg-white border border-gray-200 text-gray-700">{item.alias}</span>
-                    <span className="text-gray-400">{'->'}</span>
-                    <span className="inline-flex px-3 py-1.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700">{item.target}</span>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteAlias(item.alias)}
-                    disabled={savingAliases}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       <CategoryModal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
@@ -837,51 +412,6 @@ const CategorySettings: React.FC<CategorySettingsProps> = ({ categories, onRefre
         onSuccess={() => { setShowModal(false); onRefresh(); }}
       />
 
-      {renamingTag ? (
-        <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-transparent" onClick={() => { setRenamingTag(null); setRenameValue(''); }} />
-          <div className="relative flex min-h-full items-center justify-center px-4 py-6">
-            <div className="app-modal-panel w-full max-w-md overflow-hidden">
-              <div className="app-modal-header flex items-center justify-between px-6 py-4">
-                <h2 className="text-lg font-semibold text-gray-900">重命名标签</h2>
-                <button onClick={() => { setRenamingTag(null); setRenameValue(''); }} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">原标签</label>
-                  <div className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-500">{renamingTag.name}</div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">新标签</label>
-                  <input
-                    type="text"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 focus:bg-white transition-all"
-                  />
-                  <p className="mt-2 text-xs text-gray-500">如果新标签已存在，会自动合并到已有标签。</p>
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button
-                    onClick={() => { setRenamingTag(null); setRenameValue(''); }}
-                    className="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 transition-all"
-                  >
-                    取消
-                  </button>
-                  <button
-                    onClick={handleRenameTag}
-                    className="px-5 py-2.5 bg-gradient-to-r from-sky-500 to-cyan-600 rounded-xl text-white hover:from-sky-600 hover:to-cyan-700 transition-all"
-                  >
-                    保存
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 };
@@ -1172,7 +702,7 @@ const AISettings: React.FC<AISettingsProps> = ({ aiStatus, aiConfigs, onRefresh,
           </div>
           <h2 className="text-lg font-semibold text-gray-900">AI设置</h2>
         </div>
-        
+
         {aiStatus ? (
           <div className="p-6 space-y-6">
             {canManageSystem ? (

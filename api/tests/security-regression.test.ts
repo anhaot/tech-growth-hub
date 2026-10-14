@@ -56,7 +56,6 @@ const NO_PERMISSIONS: UserPermissions = {
   ai_generate: false,
   ai_config_manage: false,
   ai_chat: false,
-  tag_manage: false,
   duplicate_manage: false,
   backup_export: false,
   backup_restore: false,
@@ -754,7 +753,7 @@ test('revoked category access hides bookmarked questions and learning progress',
   assert.equal(lastViewed.body, null);
 });
 
-test('exports reimport wrapped JSON with empty answers, null explanations, categories and tags', async () => {
+test('exports reimport wrapped JSON with empty answers, null explanations and categories; legacy tags are ignored', async () => {
   const user = await createUser('export-owner', 'export-owner@example.com', 'Password123');
   const category = await app.post('/api/categories').set('Authorization', `Bearer ${user.token}`).send({ name: 'Export category' });
   const original = await app.post('/api/questions').set('Authorization', `Bearer ${user.token}`)
@@ -762,7 +761,7 @@ test('exports reimport wrapped JSON with empty answers, null explanations, categ
   assert.equal(original.status, 201);
   const exported = await app.get('/api/questions/export').set('Authorization', `Bearer ${user.token}`);
   assert.equal(exported.status, 200);
-  assert.deepEqual(exported.body.questions[0].tags, ['linux', 'network']);
+  assert.equal(Object.hasOwn(exported.body.questions[0], 'tags'), false);
   const imported = await app.post('/api/import/json').set('Authorization', `Bearer ${user.token}`)
     .attach('file', Buffer.from(JSON.stringify(exported.body)), 'export.json');
   assert.equal(imported.status, 200);
@@ -771,12 +770,12 @@ test('exports reimport wrapped JSON with empty answers, null explanations, categ
   const rows = await db.getQuestions(user.user.id);
   assert.equal(rows.total, 2);
   assert.ok(rows.questions.every((question) => question.content === 'Multiline\ncontent'
-    && question.category_id === category.body.id && question.answer === '' && question.tags === '["linux","network"]'));
+    && question.category_id === category.body.id && question.answer === '' && question.tags === '[]'));
   const legacy = await app.post('/api/import/json').set('Authorization', `Bearer ${user.token}`)
     .attach('file', Buffer.from(JSON.stringify([{ content: 'Legacy tags', answer: 'Answer', tags: '["linux","network"]' }])), 'legacy.json');
   assert.equal(legacy.body.success, 1);
   const legacyRow = await db.getQuestions(user.user.id, 1, 20, { keyword: 'Legacy tags' });
-  assert.equal(legacyRow.questions[0].tags, '["linux","network"]');
+  assert.equal(legacyRow.questions[0].tags, '[]');
 });
 
 test('CSV, Markdown, and text imports preserve their supported fields', async () => {
@@ -900,7 +899,7 @@ test('merging checks separate permissions and rolls back question and history on
   const user = await createUser('merge-atomic', 'merge-atomic@example.com', 'Password123');
   const keep = await createQuestion(user.user.id, 'merge-keep');
   const remove = await createQuestion(user.user.id, 'merge-remove');
-  await db.updateQuestion(remove.id, { tags: '["merged"]' });
+  await db.run('UPDATE questions SET tags = ? WHERE id = ?', ['["legacy"]', remove.id]);
   await db.updateUser(user.user.id, { permissions: { ...NO_PERMISSIONS, question_view: true, duplicate_manage: true } });
   const auth = { Authorization: `Bearer ${user.token}` };
   assert.equal((await app.post('/api/questions/duplicates/merge').set(auth).send({ keepId: keep.id, removeId: remove.id })).status, 403);
@@ -915,7 +914,7 @@ test('merging checks separate permissions and rolls back question and history on
   } finally { await db.run('DROP TRIGGER reject_question_delete'); }
   const merged = await app.post('/api/questions/duplicates/merge').set(auth).send({ keepId: keep.id, removeId: remove.id });
   assert.equal(merged.status, 200);
-  assert.equal((await db.getQuestionById(keep.id))?.tags, '["merged"]');
+  assert.equal((await db.getQuestionById(keep.id))?.tags, '[]');
   assert.equal((await db.getQuestionById(keep.id))?.revision, 2);
   assert.equal(await db.getQuestionById(remove.id), undefined);
 });
@@ -1041,7 +1040,7 @@ test('AI disabled settings persist in the database and reject all content genera
     assert.equal((await app.put('/api/ai/settings').set(auth).send({ enabled: false })).status, 200);
     assert.equal(await db.getSetting('ai_enabled'), 'false');
     assert.equal((await app.get('/api/ai/status').set(auth)).body.enabled, false);
-    for (const endpoint of ['analyze', 'expand', 'recommend', 'generate', 'explain', 'chat', 'test-config', 'batch-generate', 'polish-question', 'answer-drafts/raw', 'answer-draft', 'supplement', 'batch-tags']) {
+    for (const endpoint of ['analyze', 'expand', 'recommend', 'generate', 'explain', 'chat', 'test-config', 'batch-generate', 'polish-question', 'answer-drafts/raw', 'answer-draft', 'supplement']) {
       const denied = await app.post(`/api/ai/${endpoint}`).set(auth).send({});
       assert.equal(denied.status, 403, endpoint);
       assert.match(denied.body.error, /已关闭/);
@@ -1122,7 +1121,7 @@ test('import preview validates without writes, pages rows, excludes selections a
   const user = await createUser('preview-owner', 'preview-owner@example.com', 'Password123');
   const questions = Array.from({ length: 24 }, (_, index) => ({ title: `Preview ${index}`, content: `Body ${index}`, answer: `Answer ${index}`, difficulty: index === 0 ? 'constructor' : 'easy', tags: ['preview'] }));
   const preview = await app.post('/api/import/preview/json').set('Authorization', `Bearer ${user.token}`)
-    .attach('file', Buffer.from(JSON.stringify({ questions: [...questions, null, { content: 'Invalid tags', tags: [42] }] })), 'preview.json');
+    .attach('file', Buffer.from(JSON.stringify({ questions: [...questions, null, { content: 42, tags: [42] }] })), 'preview.json');
   assert.equal(preview.status, 200);
   assert.equal(preview.body.total, 26); assert.equal(preview.body.valid, 24); assert.equal(preview.body.invalid, 2);
   assert.equal(preview.body.rows.length, 20); assert.equal(preview.body.rows[0].question.difficulty, 'medium');
@@ -1180,10 +1179,10 @@ test('CSV and Markdown previews preserve metadata and code, and malformed inputs
   const csv = await app.post('/api/import/preview/csv').set('Authorization', `Bearer ${user.token}`)
     .attach('file', Buffer.from('\uFEFF内容,答案,标签\nCSV preview,Answer,"a,b"\nMissing answer,,\n'), 'preview.csv');
   assert.equal(csv.status, 200); assert.equal(csv.body.valid, 1); assert.equal(csv.body.invalid, 1); assert.equal(csv.body.rows[1].row, 3);
-  assert.deepEqual(csv.body.rows[0].question.tags, ['a', 'b']);
+  assert.equal(Object.hasOwn(csv.body.rows[0].question, 'tags'), false);
   const markdown = await app.post('/api/import/preview/markdown').set('Authorization', `Bearer ${user.token}`)
     .attach('file', Buffer.from('**MD preview**\nBody\n答案：Answer\n```txt\n**inside code**\n标签：literal\n```\n解析：Explanation\n标签：docker,k8s\n难度：困难\n'), 'preview.md');
-  assert.equal(markdown.body.valid, 1); assert.deepEqual(markdown.body.rows[0].question.tags, ['docker', 'k8s']);
+  assert.equal(markdown.body.valid, 1); assert.equal(Object.hasOwn(markdown.body.rows[0].question, 'tags'), false);
   assert.equal(markdown.body.rows[0].question.difficulty, 'hard'); assert.match(markdown.body.rows[0].question.answer, /\*\*inside code\*\*/);
   assert.equal((await app.post('/api/import/preview/json').set('Authorization', `Bearer ${user.token}`).attach('file', Buffer.from('{ broken'), 'broken.json')).status, 400);
   assert.equal((await app.post('/api/import/preview/json').set('Authorization', `Bearer ${user.token}`).attach('file', Buffer.from('[]'), 'wrong.csv')).status, 400);
@@ -1275,20 +1274,40 @@ test('AI creation, activation and linked credential updates are atomic', async (
   } finally { await db.run('DROP TRIGGER reject_atomic_ai_update'); }
 });
 
-test('tags with prototype names are preserved and long tag health comparisons stay bounded', async () => {
-  const { normalizeTagsInput, parseTagAliasMap } = await import('../src/utils/tags.js');
-  assert.deepEqual(normalizeTagsInput(['constructor', '__proto__', 'toString']), ['constructor', '__proto__', 'tostring']);
-  const aliases = parseTagAliasMap('{"constructor":"construction","__proto__":"prototype"}');
-  assert.deepEqual(normalizeTagsInput(['constructor', '__proto__'], aliases), ['construction', 'prototype']);
-  const user = await createUser('tag-health-bounded', 'tag-health-bounded@example.com', 'Password123');
-  const tags = [`${'x'.repeat(20000)}a`, `${'x'.repeat(20000)}b`, 'constructor', '__proto__'];
+test('retired tags are ignored by writes and imports; legacy tags survive edits, restores and complete backups', async () => {
+  const user = await createUser('category-only', 'category-only@example.com', 'Password123');
+  await db.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify({ ...(await db.getUserById(user.user.id))!.permissions, tag_manage: true }), user.user.id]);
+  assert.equal(Object.hasOwn((await db.getUserById(user.user.id))!.permissions, 'tag_manage'), false);
+  const category = await app.post('/api/categories').set('Authorization', `Bearer ${user.token}`).send({ name: 'Only category' });
   const created = await app.post('/api/questions').set('Authorization', `Bearer ${user.token}`)
-    .send({ title: 'long tag health', content: 'body', tags });
+    .send({ title: 'Category only', content: 'Original body', categoryId: category.body.id, tags: [42] });
   assert.equal(created.status, 201);
-  assert.deepEqual(JSON.parse(created.body.tags), tags);
-  const health = await app.get('/api/questions/tags/health').set('Authorization', `Bearer ${user.token}`);
-  assert.equal(health.status, 200);
-  assert.ok(health.body.similarPairs.some((pair: { left: string; right: string }) => pair.left === tags[0] && pair.right === tags[1]));
+  assert.equal(created.body.tags, '[]');
+  // Simulate a database created by the previous version.
+  await db.run('UPDATE questions SET tags = ? WHERE id = ?', ['["legacy"]', created.body.id]);
+  const edited = await app.put(`/api/questions/${created.body.id}`).set('Authorization', `Bearer ${user.token}`)
+    .send({ content: 'Edited body', tags: { retired: true }, expectedRevision: 1 });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.tags, '["legacy"]');
+  assert.equal(edited.body.category_id, category.body.id);
+  const restored = await app.post(`/api/questions/${created.body.id}/versions/1/restore`).set('Authorization', `Bearer ${user.token}`).send({ expectedRevision: 2 });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.content, 'Original body');
+  assert.equal(restored.body.tags, '["legacy"]');
+  const filtered = await app.get(`/api/questions?categoryId=${category.body.id}&tags[]=missing`).set('Authorization', `Bearer ${user.token}`);
+  assert.equal(filtered.body.total, 1);
+  const preview = await app.post('/api/import/preview/text').set('Authorization', `Bearer ${user.token}`)
+    .send({ categoryId: category.body.id, questions: [{ content: 'Legacy import', answer: 'Answer', tags: [42] }] });
+  assert.equal(preview.body.valid, 1);
+  assert.equal(Object.hasOwn(preview.body.rows[0].question, 'tags'), false);
+  const backup = await db.exportAllData();
+  assert.equal(backup.questions.find(row => row.id === created.body.id)?.tags, '["legacy"]');
+  await db.replaceAllData(backup);
+  assert.equal((await db.getQuestionById(created.body.id))?.tags, '["legacy"]');
+  for (const [method, path] of [['get', '/api/questions/tags/health'], ['put', '/api/questions/tags/rename'], ['post', '/api/questions/batch-tags'], ['post', '/api/ai/batch-tags']] as const) {
+    const removed = await app[method](path).set('Authorization', `Bearer ${user.token}`).send({ ids: [created.body.id], tags: ['new'] });
+    assert.equal(removed.status, 404, path);
+  }
 });
 
 test('malformed JSON and oversized payloads return client errors', async () => {

@@ -13,7 +13,6 @@ export interface UserPermissions {
   ai_generate: boolean;
   ai_config_manage: boolean;
   ai_chat: boolean;
-  tag_manage: boolean;
   duplicate_manage: boolean;
   backup_export: boolean;
   backup_restore: boolean;
@@ -57,6 +56,7 @@ export interface Question {
   difficulty: 'easy' | 'medium' | 'hard';
   category_id: string | null;
   user_id: string;
+  /** Retired field retained for legacy databases and complete backups. */
   tags: string;
   created_at: string;
   updated_at: string;
@@ -148,24 +148,6 @@ export interface QuestionFilter {
   categoryId?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
   keyword?: string;
-  tags?: string[];
-}
-
-export interface TagSummary {
-  name: string;
-  count: number;
-}
-
-export interface TagHealthPair {
-  left: string;
-  right: string;
-  reason: string;
-}
-
-export interface TagHealthReport {
-  lowFrequency: TagSummary[];
-  aliased: Array<{ alias: string; target: string }>;
-  similarPairs: TagHealthPair[];
 }
 
 export type DatabaseType = 'sqlite' | 'mysql';

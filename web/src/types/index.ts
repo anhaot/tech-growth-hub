@@ -13,7 +13,6 @@ export interface UserPermissions {
   ai_generate: boolean;
   ai_config_manage: boolean;
   ai_chat: boolean;
-  tag_manage: boolean;
   duplicate_manage: boolean;
   backup_export: boolean;
   backup_restore: boolean;
@@ -56,7 +55,6 @@ export interface Question {
   difficulty: 'easy' | 'medium' | 'hard';
   category_id: string | null;
   user_id: string;
-  tags: string;
   created_at: string;
   updated_at: string;
 }
@@ -77,7 +75,6 @@ export interface InterviewDraft {
   answer: string;
   explanation: string;
   difficulty: 'easy' | 'medium' | 'hard';
-  tags: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -129,7 +126,7 @@ export interface ImportPreview {
   page: number; pageSize: number; totalPages: number;
   rows: Array<{ row: number; error?: string; warnings: string[]; question?: {
     title: string; content: string; answer: string; explanation: string;
-    difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null; tags: string[];
+    difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null;
   } }>;
 }
 
@@ -138,23 +135,6 @@ export interface ImportResult {
   success: number;
   failed: number;
   errors: Array<{ row: number; error: string }>;
-}
-
-export interface TagSummary {
-  name: string;
-  count: number;
-}
-
-export interface TagHealthPair {
-  left: string;
-  right: string;
-  reason: string;
-}
-
-export interface TagHealthReport {
-  lowFrequency: TagSummary[];
-  aliased: Array<{ alias: string; target: string }>;
-  similarPairs: TagHealthPair[];
 }
 
 export interface SimilarQuestionPair {

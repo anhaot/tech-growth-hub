@@ -14,7 +14,6 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { colors, difficultyLabel, spacing, radius, typography } from "../theme";
 import type { Category, Question } from "../types";
-import { tagsOf } from "../types";
 
 export const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background },
@@ -429,13 +428,7 @@ export function Metadata({
       {category && (
         <Text style={[styles.muted, { paddingVertical: 2 }]}>{category}</Text>
       )}
-      {tagsOf(question.tags)
-        .slice(0, 4)
-        .map((tag) => (
-          <Text key={tag} style={[styles.muted, { paddingVertical: 2 }]}>
-            #{tag}
-          </Text>
-        ))}
+
     </View>
   );
 }

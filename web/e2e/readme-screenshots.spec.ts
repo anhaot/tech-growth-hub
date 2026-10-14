@@ -20,7 +20,6 @@ test('生成 README 产品截图', async ({ page, request }) => {
       title: content,
       content,
       answer,
-      tags: ['运维', '排障'],
     });
   }
   await primeAuth(page, login);
@@ -49,5 +48,8 @@ test('生成 README 产品截图', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/study');
   await expect(page.getByRole('button', { name: '更多题目操作' })).toBeVisible();
+  await page.getByRole('spinbutton', { name: '跳转题号' }).fill('1');
+  await page.getByRole('button', { name: '跳转', exact: true }).click();
+  await expect(page.getByTestId('learning-question-content')).toContainText('Redis 缓存雪崩');
   await page.screenshot({ path: path.join(screenshotDir, 'mobile-review.png'), fullPage: true });
 });

@@ -9,7 +9,7 @@ import {
   saveInterviewDraft,
   saveInterviewDrafts,
 } from '@/lib/offlineStorage';
-import { parseQuestionTags } from '@/lib/questionTags';
+
 import { toast } from 'react-hot-toast';
 import { BrainCircuit, Check, CloudOff, Plus, Sparkles, Trash2, Upload } from 'lucide-react';
 
@@ -23,7 +23,7 @@ function newDraft(content: string): InterviewDraft {
     answer: '',
     explanation: '',
     difficulty: 'medium',
-    tags: [],
+
     createdAt: now,
     updatedAt: now,
   };
@@ -205,7 +205,7 @@ export const InterviewCapturePage: React.FC = () => {
             answer: generated.answer,
             explanation: generated.explanation,
             difficulty: generated.difficulty,
-            tags: generated.tags,
+
             updatedAt: new Date().toISOString(),
           } : draft;
         });
@@ -240,7 +240,6 @@ export const InterviewCapturePage: React.FC = () => {
           explanation: draft.explanation || undefined,
           difficulty: draft.difficulty,
           categoryId: categoryId || undefined,
-          tags: draft.tags,
         });
         importedIds.push(draft.id);
       }
@@ -348,7 +347,7 @@ export const InterviewCapturePage: React.FC = () => {
                 <select value={draft.difficulty} onChange={(event) => updateDraft(draft.id, { difficulty: event.target.value as InterviewDraft['difficulty'] })} onBlur={() => persistDraft(draft.id)} className="select-field min-h-11 px-3 pr-9">
                   <option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option>
                 </select>
-                <input value={draft.tags.join(', ')} onChange={(event) => updateDraft(draft.id, { tags: parseQuestionTags(event.target.value) })} onBlur={() => persistDraft(draft.id)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-base outline-none focus:border-violet-500" placeholder="标签（逗号分隔）" />
+
               </div>
             </fieldset>
           </article>

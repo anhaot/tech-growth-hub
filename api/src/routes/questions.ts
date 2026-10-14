@@ -3,8 +3,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { db } from '../database/index.js';
 import { authMiddleware, AuthRequest, getLibraryOwnerId, hasCategoryScopeAccess, hasPermission, requirePermission } from '../middleware/auth.js';
-import { Question, LearningProgress, PaginatedResult, QuestionFilter, TagSummary, TagHealthPair, TagHealthReport, User } from '../types/index.js';
-import { normalizeTagName, normalizeTagsInput, parseStoredTags, parseTagAliasMap } from '../utils/tags.js';
+import { Question, LearningProgress, PaginatedResult, QuestionFilter, User } from '../types/index.js';
 
 import { scanDuplicates } from '../services/questionDuplicates.js';
 
@@ -15,32 +14,6 @@ function validateId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
-function levenshteinDistance(a: string, b: string): number {
-  const cutoff = 2;
-  if (Math.abs(a.length - b.length) > cutoff) return cutoff + 1;
-  let previous = new Map<number, number>();
-  for (let j = 0; j <= Math.min(b.length, cutoff); j++) previous.set(j, j);
-  for (let i = 1; i <= a.length; i++) {
-    const current = new Map<number, number>();
-    if (i <= cutoff) current.set(0, i);
-    let minimum = current.get(0) ?? cutoff + 1;
-    for (let j = Math.max(1, i - cutoff); j <= Math.min(b.length, i + cutoff); j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      const distance = Math.min((previous.get(j) ?? cutoff + 1) + 1,
-        (current.get(j - 1) ?? cutoff + 1) + 1, (previous.get(j - 1) ?? cutoff + 1) + cost);
-      current.set(j, distance);
-      minimum = Math.min(minimum, distance);
-    }
-    if (minimum > cutoff) return cutoff + 1;
-    previous = current;
-  }
-  return previous.get(b.length) ?? cutoff + 1;
-}
-
-function simplifyTag(tag: string): string {
-  return tag.replace(/[\s\-_./]/g, '');
-}
-
 const createQuestionSchema = z.object({
   title: z.string().min(1).max(500),
   content: z.string().min(1),
@@ -48,7 +21,6 @@ const createQuestionSchema = z.object({
   explanation: z.string().optional().nullable(),
   difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
   categoryId: z.string().optional().nullable(),
-  tags: z.array(z.string()).optional(),
 });
 
 const updateQuestionSchema = z.object({
@@ -58,7 +30,6 @@ const updateQuestionSchema = z.object({
   explanation: z.string().optional().nullable(),
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
   categoryId: z.string().optional().nullable(),
-  tags: z.array(z.string()).optional(),
   expectedRevision: z.number().int().min(1).optional(),
   source: z.enum(['edit', 'ai-polish', 'ai-answer']).optional(),
 });
@@ -67,32 +38,14 @@ const batchDeleteSchema = z.object({
   ids: z.array(z.string()).min(1),
 });
 
-const batchTagsSchema = z.object({
-  ids: z.array(z.string()).min(1),
-  mode: z.enum(['add', 'remove', 'replace']),
-  tags: z.array(z.string()).min(1),
-});
-
 const mergeDuplicateSchema = z.object({
   keepId: z.string().uuid(),
   removeId: z.string().uuid(),
 }).refine((data) => data.keepId !== data.removeId, '不能将题目与自身合并');
 
-const renameTagSchema = z.object({
-  fromTag: z.string().min(1).max(100),
-  toTag: z.string().min(1).max(100),
-});
-
-const deleteTagSchema = z.object({
-  tagName: z.string().min(1).max(100),
-});
-
-const normalizeTagsSchema = z.object({});
-
 function getAllowedCategoryIds(user: User): string[] | undefined {
   return user.user_type === 'integrated' && user.category_scopes.length > 0
-    ? user.category_scopes
-    : undefined;
+    ? user.category_scopes : undefined;
 }
 
 async function ensureAccessibleCategory(user: User, ownerId: string, categoryId: string | null | undefined) {
@@ -134,23 +87,15 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       pageSize: z.coerce.number().int().min(1).max(1000).default(20),
     }).parse(req.query);
     const { page, pageSize } = pagination;
-    const tagQuery = req.query.tags;
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const tags = typeof tagQuery === 'string'
-      ? normalizeTagsInput(tagQuery, tagAliases)
-      : Array.isArray(tagQuery)
-        ? normalizeTagsInput(tagQuery, tagAliases)
-        : [];
     const filter: QuestionFilter = {
       categoryId: req.query.categoryId as string,
       difficulty: req.query.difficulty as 'easy' | 'medium' | 'hard',
       keyword: req.query.keyword as string,
-      tags,
     };
     const ownerId = getLibraryOwnerId(req.user!);
     const allowedCategoryIds = getAllowedCategoryIds(req.user!);
     const { questions, total } = await db.getQuestions(ownerId, page, pageSize, filter, allowedCategoryIds);
-    
+
     const result: PaginatedResult<Question> = {
       data: questions,
       total,
@@ -166,205 +111,6 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       return;
     }
     res.status(500).json({ error: '获取题目列表失败' });
-  }
-});
-
-router.get('/tags', async (req: AuthRequest, res: Response) => {
-  try {
-    const filter = {
-      categoryId: req.query.categoryId as string,
-      difficulty: req.query.difficulty as 'easy' | 'medium' | 'hard',
-      keyword: req.query.keyword as string,
-    };
-
-    const ownerId = getLibraryOwnerId(req.user!);
-    const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const tags = await db.getQuestionTags(ownerId, filter, allowedCategoryIds);
-    const result: TagSummary[] = tags;
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: '获取标签失败' });
-  }
-});
-
-router.get('/tags/health', requirePermission('tag_manage', '没有标签管理权限'), async (req: AuthRequest, res: Response) => {
-  try {
-    const ownerId = getLibraryOwnerId(req.user!);
-    const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const tags = await db.getQuestionTags(ownerId, undefined, allowedCategoryIds);
-    const aliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const lowFrequency = tags.filter((tag) => tag.count <= 1);
-    const aliased = Object.entries(aliases).map(([alias, target]) => ({ alias, target }));
-    const similarPairs: TagHealthPair[] = [];
-
-    scan: for (let i = 0; i < tags.length; i++) {
-      for (let j = i + 1; j < tags.length; j++) {
-        const left = tags[i].name;
-        const right = tags[j].name;
-        const leftSimple = simplifyTag(left);
-        const rightSimple = simplifyTag(right);
-
-        let reason = '';
-        if (leftSimple && leftSimple === rightSimple) {
-          reason = '仅符号或空格不同';
-        } else if (leftSimple.length >= 3 && rightSimple.length >= 3 && (leftSimple.includes(rightSimple) || rightSimple.includes(leftSimple))) {
-          reason = '名称包含关系';
-        } else if (Math.abs(left.length - right.length) <= 2 && levenshteinDistance(left, right) <= 2) {
-          reason = '编辑距离较近';
-        }
-
-        if (reason) {
-          similarPairs.push({ left, right, reason });
-          if (similarPairs.length === 20) break scan;
-        }
-      }
-    }
-
-    const report: TagHealthReport = {
-      lowFrequency,
-      aliased,
-      similarPairs: similarPairs.slice(0, 20),
-    };
-
-    res.json(report);
-  } catch (error) {
-    res.status(500).json({ error: '获取标签健康检查失败' });
-  }
-});
-
-router.put('/tags/rename', requirePermission('tag_manage', '没有标签管理权限'), async (req: AuthRequest, res: Response) => {
-  try {
-    const data = renameTagSchema.parse(req.body);
-    const fromTag = normalizeTagName(data.fromTag);
-    const toTag = normalizeTagName(data.toTag);
-
-    if (fromTag === toTag) {
-      res.status(400).json({ error: '新旧标签不能相同' });
-      return;
-    }
-
-    const ownerId = getLibraryOwnerId(req.user!);
-    const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
-    let updated = 0;
-
-    for (const question of questions) {
-      const parsedTags = parseStoredTags(question.tags);
-      if (!parsedTags.includes(fromTag)) {
-        continue;
-      }
-
-      const nextTags = Array.from(new Set(
-        parsedTags
-          .map((tag) => (tag === fromTag ? toTag : normalizeTagName(tag)))
-          .filter(Boolean)
-      ));
-      await db.updateQuestion(question.id, { tags: JSON.stringify(nextTags) }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
-      updated += 1;
-    }
-
-    res.json({ updated, message: `已更新 ${updated} 道题目` });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: '输入验证失败', details: error.errors });
-      return;
-    }
-    res.status(500).json({ error: '重命名标签失败' });
-  }
-});
-
-router.delete('/tags', requirePermission('tag_manage', '没有标签管理权限'), async (req: AuthRequest, res: Response) => {
-  try {
-    const data = deleteTagSchema.parse(req.body);
-    const ownerId = getLibraryOwnerId(req.user!);
-    const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const normalizedTagName = normalizeTagName(data.tagName);
-    const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
-    let updated = 0;
-
-    for (const question of questions) {
-      const parsedTags = parseStoredTags(question.tags);
-      if (!parsedTags.includes(normalizedTagName)) {
-        continue;
-      }
-
-      const nextTags = parsedTags.filter((tag) => tag !== normalizedTagName);
-      await db.updateQuestion(question.id, { tags: JSON.stringify(nextTags) }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
-      updated += 1;
-    }
-
-    res.json({ updated, message: `已从 ${updated} 道题目中移除标签` });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: '输入验证失败', details: error.errors });
-      return;
-    }
-    res.status(500).json({ error: '删除标签失败' });
-  }
-});
-
-router.post('/tags/normalize', requirePermission('tag_manage', '没有标签管理权限'), async (req: AuthRequest, res: Response) => {
-  try {
-    normalizeTagsSchema.parse(req.body ?? {});
-    const ownerId = getLibraryOwnerId(req.user!);
-    const allowedCategoryIds = getAllowedCategoryIds(req.user!);
-    const questions = await db.getAllQuestions(ownerId, allowedCategoryIds);
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    let updated = 0;
-
-    for (const question of questions) {
-      const normalizedTags = parseStoredTags(question.tags, tagAliases);
-      const nextValue = JSON.stringify(normalizedTags);
-      if (nextValue !== (question.tags || '[]')) {
-        await db.updateQuestion(question.id, { tags: nextValue }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
-        updated += 1;
-      }
-    }
-
-    res.json({ updated, message: `已规范化 ${updated} 道题目的标签` });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: '输入验证失败', details: error.errors });
-      return;
-    }
-    res.status(500).json({ error: '规范化标签失败' });
-  }
-});
-
-router.post('/batch-tags', requirePermission('question_batch_edit', '没有批量编辑题目权限'), async (req: AuthRequest, res: Response) => {
-  try {
-    const data = batchTagsSchema.parse(req.body);
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const nextTagsInput = normalizeTagsInput(data.tags, tagAliases);
-    let updated = 0;
-
-    for (const id of data.ids) {
-      const question = await getAccessibleQuestion(req.user!, id);
-      if (!question) {
-        continue;
-      }
-
-      const currentTags = parseStoredTags(question.tags, tagAliases);
-      const resultTags = data.mode === 'add'
-        ? normalizeTagsInput([...currentTags, ...nextTagsInput], tagAliases)
-        : data.mode === 'remove'
-          ? currentTags.filter((tag) => !nextTagsInput.includes(tag))
-          : nextTagsInput;
-
-      const nextValue = JSON.stringify(resultTags);
-      if (nextValue !== (question.tags || '[]')) {
-        await db.updateQuestion(question.id, { tags: nextValue }, { actorId: req.user!.id, source: 'tags', expectedRevision: question.revision });
-        updated += 1;
-      }
-    }
-
-    res.json({ updated, message: `已更新 ${updated} 道题目的标签` });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: '输入验证失败', details: error.errors });
-      return;
-    }
-    res.status(500).json({ error: '批量更新标签失败' });
   }
 });
 
@@ -439,14 +185,12 @@ router.post('/duplicates/merge', requirePermission('duplicate_manage', '没有�
 
     if (keepQuestion.user_id !== removeQuestion.user_id) { res.status(400).json({ error: '不能合并不同题库的题目' }); return; }
     if (!hasPermission(req.user, 'question_delete') || !hasPermission(req.user, 'question_edit_meta') || !hasPermission(req.user, 'question_edit_content')) { res.status(403).json({ error: '合并需要删除、内容和属性编辑权限' }); return; }
-    const mergedTags = Array.from(new Set([...parseStoredTags(keepQuestion.tags), ...parseStoredTags(removeQuestion.tags)]));
     const keepExplanation = (keepQuestion.explanation || '').trim();
     const removeExplanation = (removeQuestion.explanation || '').trim();
 
     await db.updateQuestion(keepQuestion.id, {
       explanation: keepExplanation || removeExplanation || null,
       category_id: keepQuestion.category_id || removeQuestion.category_id,
-      tags: JSON.stringify(mergedTags),
     }, { actorId: req.user!.id, source: 'merge', expectedRevision: keepQuestion.revision, removeId: removeQuestion.id });
 
     res.json({ message: '已合并题目并删除重复题', keepId: keepQuestion.id, removeId: removeQuestion.id });
@@ -546,7 +290,7 @@ router.get('/export', requirePermission('question_export', '没有导出权限')
       const batch = await db.getQuestions(ownerId, page, 1000, { categoryId }, allowedCategoryIds);
       questions.push(...batch.questions);
     }
-    
+
     const exportData = questions.map(q => ({
       title: q.title,
       content: q.content,
@@ -554,9 +298,8 @@ router.get('/export', requirePermission('question_export', '没有导出权限')
       explanation: q.explanation,
       categoryId: q.category_id,
       difficulty: q.difficulty,
-      tags: parseStoredTags(q.tags),
     }));
-    
+
     res.json({ questions: exportData, total: exportData.length });
   } catch (error) {
     res.status(500).json({ error: '导出题目失败' });
@@ -565,8 +308,7 @@ router.get('/export', requirePermission('question_export', '没有导出权限')
 
 router.get('/position/:id', async (req: AuthRequest, res: Response) => {
   try {
-    const tags = normalizeTagsInput(req.query.tags);
-    const index = await db.getQuestionPosition(req.params.id, getLibraryOwnerId(req.user!), { categoryId: req.query.categoryId as string, tags }, getAllowedCategoryIds(req.user!));
+    const index = await db.getQuestionPosition(req.params.id, getLibraryOwnerId(req.user!), { categoryId: req.query.categoryId as string }, getAllowedCategoryIds(req.user!));
     res.json({ index });
   } catch { res.status(500).json({ error: '获取题目位置失败' }); }
 });
@@ -594,7 +336,7 @@ router.post('/:id/versions/:version/restore', async (req: AuthRequest, res: Resp
     if (!hasPermission(req.user, 'question_edit_content') || !hasPermission(req.user, 'question_edit_meta')) { res.status(403).json({ error: '回退版本需要内容和属性编辑权限' }); return; }
     const categoryAccess = await ensureAccessibleCategory(req.user!, question.user_id, snapshot.category_id);
     if (!categoryAccess.ok) { res.status(categoryAccess.status).json({ error: categoryAccess.error }); return; }
-    const updated = await db.updateQuestion(question.id, snapshot, { actorId: req.user!.id, source: `restore:${version}`, expectedRevision });
+    const updated = await db.updateQuestion(question.id, { title: snapshot.title, content: snapshot.content, answer: snapshot.answer, explanation: snapshot.explanation, difficulty: snapshot.difficulty, category_id: snapshot.category_id }, { actorId: req.user!.id, source: `restore:${version}`, expectedRevision });
     res.json(updated);
   } catch (error) {
     if (error instanceof Error && error.message === 'QUESTION_CONFLICT') { res.status(409).json({ error: '题目已被修改，请刷新后再回退' }); return; }
@@ -622,7 +364,6 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 router.post('/', requirePermission('question_create', '没有新增题目权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = createQuestionSchema.parse(req.body);
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
     const ownerId = getLibraryOwnerId(req.user!);
     const categoryAccess = await ensureAccessibleCategory(req.user!, ownerId, data.categoryId || null);
     if (!categoryAccess.ok) {
@@ -639,7 +380,7 @@ router.post('/', requirePermission('question_create', '没有新增题目权限'
       difficulty: data.difficulty,
       category_id: data.categoryId || null,
       user_id: ownerId,
-      tags: JSON.stringify(normalizeTagsInput(data.tags || [], tagAliases)),
+      tags: '[]',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -667,12 +408,6 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       res.status(404).json({ error: '题目不存在' });
       return;
     }
-
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const nextTags = data.tags === undefined
-      ? parseStoredTags(question.tags, tagAliases)
-      : normalizeTagsInput(data.tags, tagAliases);
-    const currentTags = parseStoredTags(question.tags, tagAliases);
     const contentChanged = (
       (data.title !== undefined && data.title !== question.title)
       || (data.content !== undefined && data.content !== question.content)
@@ -682,7 +417,6 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     const metaChanged = (
       (data.difficulty !== undefined && data.difficulty !== question.difficulty)
       || (data.categoryId !== undefined && (data.categoryId || null) !== question.category_id)
-      || JSON.stringify(nextTags) !== JSON.stringify(currentTags)
     );
 
     if (contentChanged && !hasPermission(req.user, 'question_edit_content')) {
@@ -708,7 +442,6 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       explanation: data.explanation,
       difficulty: data.difficulty,
       category_id: data.categoryId === undefined ? undefined : (data.categoryId || null),
-      tags: data.tags ? JSON.stringify(nextTags) : undefined,
     };
 
     const updatedQuestion = await db.updateQuestion(req.params.id, updateData, { actorId: req.user!.id, source: data.source || 'edit', expectedRevision: data.expectedRevision ?? question.revision });

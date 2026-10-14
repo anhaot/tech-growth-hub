@@ -40,8 +40,7 @@ const isQuestion = (value: unknown): value is Question =>
   typeof value.answer === "string" &&
   (value.explanation === null || typeof value.explanation === "string") &&
   ["easy", "medium", "hard"].includes(String(value.difficulty)) &&
-  (value.category_id === null || typeof value.category_id === "string") &&
-  typeof value.tags === "string";
+  (value.category_id === null || typeof value.category_id === "string");
 
 function parseSnapshot(raw: string): Snapshot {
   const error = () => new Error("本地题库读取失败，请联网后重新下载");
@@ -281,7 +280,7 @@ export class StudyRepository {
         (!filter.categoryId || q.category_id === filter.categoryId) &&
         (!filter.difficulty || q.difficulty === filter.difficulty) &&
         (!keyword ||
-          [q.title, q.content, q.answer, q.explanation, q.tags].some((text) =>
+          [q.title, q.content, q.answer, q.explanation].some((text) =>
             text?.toLocaleLowerCase().includes(keyword),
           )),
     );

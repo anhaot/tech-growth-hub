@@ -3,12 +3,11 @@ import { z } from 'zod';
 import { db } from '../database/index.js';
 import { getLibraryOwnerId, hasCategoryScopeAccess } from '../middleware/auth.js';
 import { User } from '../types/index.js';
-import { normalizeTagsInput, parseStoredTags, parseTagAliasMap } from '../utils/tags.js';
 
 export type ImportFormat = 'csv' | 'json' | 'markdown' | 'text';
 export interface ImportQuestion {
   title: string; content: string; answer: string; explanation: string;
-  difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null; tags: string[];
+  difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null;
 }
 export interface ImportRow { row: number; question?: ImportQuestion; error?: string; warnings: string[] }
 export class ImportInputError extends Error {}
@@ -42,13 +41,14 @@ function markdownRecords(text: string): Record<string, unknown>[] {
       continue;
     }
     if (!fence && /^\*\*.+\*\*$/.test(trimmed)) {
-      save(); current = { title: trimmed.slice(2, -2), content: '', answer: '', explanation: '', tags: '', difficulty: '' }; continue;
+      save(); current = { title: trimmed.slice(2, -2), content: '', answer: '', explanation: '', difficulty: '' }; continue;
     }
     if (!current) continue;
     const header = !fence && trimmed.match(/^(答案|解析)[：:]\s*(.*)$/);
     if (header) { section = header[1] === '答案' ? 'answer' : 'explanation'; current[section] += (current[section] ? '\n' : '') + header[2]; continue; }
     const metadata = !fence && trimmed.match(/^(标签|难度)[：:]\s*(.*)$/);
-    if (metadata) { current[metadata[1] === '标签' ? 'tags' : 'difficulty'] = metadata[2]; continue; }
+    // Skip retired tag metadata in legacy Markdown, while preserving fenced code.
+    if (metadata) { if (metadata[1] === '难度') current.difficulty = metadata[2]; continue; }
     current[section] += (current[section] ? '\n' : '') + line;
   }
   save();
@@ -80,7 +80,6 @@ export async function validateImportCategory(user: User, ownerId: string, catego
 export async function prepareImport(user: User, format: ImportFormat, input: unknown, targetCategory: unknown): Promise<ImportRow[]> {
   if (targetCategory != null && typeof targetCategory !== 'string') throw new ImportInputError('分类 ID 格式错误');
   const records = parseImportRecords(format, input);
-  const aliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
   const categories = new Map<string | null, string | undefined>();
   const rows: ImportRow[] = [];
   for (const [index, record] of records.entries()) {
@@ -96,15 +95,13 @@ export async function prepareImport(user: User, format: ImportFormat, input: unk
         content, answer, explanation: q.explanation ?? q.解析 ?? '',
         categoryId: targetCategory || q.categoryId || q.category_id || q.分类ID || null,
       });
-      const rawTags = q.tags ?? q.标签;
-      if (rawTags != null && typeof rawTags !== 'string' && (!Array.isArray(rawTags) || rawTags.some(tag => typeof tag !== 'string'))) throw new Error('标签必须是字符串或字符串数组');
       const level = difficulty(q.difficulty ?? q.难度);
       if (level.warning) row.warnings.push(level.warning);
       if (!data.answer.trim()) row.warnings.push('答案为空');
       if (!categories.has(data.categoryId)) categories.set(data.categoryId, await validateImportCategory(user, getLibraryOwnerId(user), data.categoryId));
       const categoryError = categories.get(data.categoryId);
       if (categoryError) throw new Error(categoryError);
-      row.question = { ...data, difficulty: level.value, tags: typeof rawTags === 'string' ? parseStoredTags(rawTags, aliases) : normalizeTagsInput(rawTags, aliases) };
+      row.question = { ...data, difficulty: level.value};
     } catch (error) {
       row.error = error instanceof z.ZodError ? error.errors.map(item => item.message).join('；') : (error as Error).message;
     }

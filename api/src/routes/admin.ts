@@ -18,7 +18,6 @@ import {
 import { parseSessionLifetime } from '../utils/sessionLifetime.js';
 import { DatabaseProfile, DatabaseValidationReport, DatabaseTableCountSummary, User, UserPermissions } from '../types/index.js';
 import { serializeUser } from '../utils/users.js';
-import { parseTagAliasMap } from '../utils/tags.js';
 import {
   buildDatabaseConnectionConfig,
   readDatabaseRuntimeState,
@@ -47,7 +46,6 @@ const permissionsSchema = z.object({
   ai_generate: z.boolean(),
   ai_config_manage: z.boolean(),
   ai_chat: z.boolean(),
-  tag_manage: z.boolean(),
   duplicate_manage: z.boolean(),
   backup_export: z.boolean(),
   backup_restore: z.boolean(),
@@ -133,7 +131,6 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
   ai_generate: true,
   ai_config_manage: true,
   ai_chat: true,
-  tag_manage: true,
   duplicate_manage: true,
   backup_export: false,
   backup_restore: false,
@@ -157,7 +154,6 @@ const ADMIN_PERMISSIONS: UserPermissions = {
   ai_generate: true,
   ai_config_manage: true,
   ai_chat: true,
-  tag_manage: true,
   duplicate_manage: true,
   backup_export: true,
   backup_restore: true,
@@ -330,10 +326,8 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res: Response) => 
 router.get('/settings', authMiddleware, adminMiddleware, async (_req: AuthRequest, res: Response) => {
   try {
     const allowRegister = await db.getSetting('allow_register');
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
     res.json({
       allowRegister: allowRegister !== 'false',
-      tagAliases,
       loginSessionDuration: await getSessionLifetime(),
     });
   } catch (error) {
@@ -346,7 +340,7 @@ router.put('/settings/:key', authMiddleware, adminMiddleware, async (req: AuthRe
     const { key } = req.params;
     const data = updateSettingSchema.parse(req.body);
 
-    if (!['allow_register', 'tag_aliases', 'login_session_duration'].includes(key)) {
+    if (!['allow_register', 'login_session_duration'].includes(key)) {
       res.status(400).json({ error: '不支持的设置项' });
       return;
     }

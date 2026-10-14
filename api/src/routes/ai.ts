@@ -8,7 +8,6 @@ import type { AIProvider } from '../services/ai.js';
 import { config } from '../config/index.js';
 import { AIConfig, User } from '../types/index.js';
 import { assertAIBaseUrlResolvesPublic, validateAIBaseUrl } from '../utils/aiConfigSecurity.js';
-import { normalizeTagsInput, parseStoredTags, parseTagAliasMap, TagAliasMap } from '../utils/tags.js';
 
 const router = Router();
 async function answerResponse(provider: AIProvider, prompt: string) {
@@ -21,7 +20,7 @@ async function answerResponse(provider: AIProvider, prompt: string) {
 }
 router.use(authMiddleware, requirePermission('ai_use', '没有AI使用权限'));
 
-const inferencePaths = new Set(['/analyze', '/explain', '/expand', '/recommend', '/generate', '/chat', '/test-config', '/batch-generate', '/polish-question', '/answer-drafts/raw', '/answer-draft', '/supplement', '/batch-tags']);
+const inferencePaths = new Set(['/analyze', '/explain', '/expand', '/recommend', '/generate', '/chat', '/test-config', '/batch-generate', '/polish-question', '/answer-drafts/raw', '/answer-draft', '/supplement']);
 async function isAIEnabled() {
   const stored = await db.getSetting('ai_enabled');
   return stored === null || stored === undefined ? config.ai.enabled : stored === 'true';
@@ -234,12 +233,6 @@ async function markAIConfigModelStatus(aiConfig: AIConfig): Promise<{
   }
 }
 
-const batchTagsSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(200),
-  mode: z.enum(['add', 'replace']).default('add'),
-  provider: z.string().max(100).optional(),
-});
-
 function sanitizePrompt(input: string): string {
   return input
     // eslint-disable-next-line no-control-regex
@@ -278,7 +271,6 @@ function extractGeneratedQuestions(result: string): Array<{
   answer: string;
   explanation?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
-  tags?: string[];
 }> {
   const directParsed = normalizeGeneratedQuestionList(tryParseJson(result));
   const fencedParsed = normalizeGeneratedQuestionList(
@@ -311,26 +303,8 @@ function extractGeneratedQuestions(result: string): Array<{
       answer: sanitizePrompt(item.answer),
       explanation: item.explanation ? sanitizePrompt(item.explanation) : '',
       difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
-      tags: normalizeTagsInput(Array.isArray(item.tags) ? item.tags.map((tag: string) => sanitizePrompt(String(tag))) : []),
     };
   });
-}
-
-function applyTagAliasesToGeneratedQuestions(
-  questions: Array<{
-    title: string;
-    content: string;
-    answer: string;
-    explanation?: string;
-    difficulty?: 'easy' | 'medium' | 'hard';
-    tags?: string[];
-  }>,
-  aliases: TagAliasMap
-) {
-  return questions.map((question) => ({
-    ...question,
-    tags: normalizeTagsInput(question.tags || [], aliases),
-  }));
 }
 
 function extractJsonObject(result: string, errorMessage: string) {
@@ -382,11 +356,11 @@ router.get('/status', async (req: AuthRequest, res: Response) => {
 router.put('/settings', requirePermission('system_manage', '没有系统管理权限'), async (req: AuthRequest, res: Response) => {
   try {
     const data = aiSettingsSchema.parse(req.body);
-    
+
     if (data.enabled !== undefined) {
       await db.setSetting('ai_enabled', String(data.enabled));
     }
-    
+
     res.json({
       enabled: await isAIEnabled(),
       defaultProvider: config.ai.defaultProvider,
@@ -637,7 +611,7 @@ router.put('/config/:id', requirePermission('ai_config_manage', '没有AI配置�
       res.status(404).json({ error: '配置不存在' });
       return;
     }
-    
+
     const nextIsCustom = data.isCustom ?? existing.is_custom;
     const credential = data.credentialId
       ? await db.getAICredentialByIdForUser(data.credentialId, req.user!.id)
@@ -710,14 +684,14 @@ router.put('/config/:id/active', requirePermission('ai_config_manage', '没有AI
   try {
     const configs = await db.getAIConfigsByUserId(req.user!.id);
     const config = configs.find(c => c.id === req.params.id);
-    
+
     if (!config) {
       res.status(404).json({ error: '配置不存在' });
       return;
     }
-    
+
     await db.activateAIConfigForUser(req.params.id, req.user!.id);
-    
+
     res.json({ message: '已切换为当前使用的配置' });
   } catch (error) {
     res.status(500).json({ error: '设置活跃配置失败' });
@@ -727,7 +701,7 @@ router.put('/config/:id/active', requirePermission('ai_config_manage', '没有AI
 router.post('/analyze', async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, provider } = req.body;
-    
+
     if (!questionId || typeof questionId !== 'string') {
       res.status(400).json({ error: '无效的题目ID' });
       return;
@@ -741,11 +715,11 @@ router.post('/analyze', async (req: AuthRequest, res: Response) => {
 
     const userConfig = await db.getActiveAIConfig(req.user!.id);
     const providerName = sanitizePrompt(provider || userConfig?.id || config.ai.defaultProvider);
-    
+
     console.log('AI Analyze request:', { questionId, provider, providerName, hasUserConfig: Boolean(userConfig) });
 
     const aiProvider = await aiService.getProvider(providerName, { userId: req.user!.id, role: req.user!.role });
-    
+
     const prompt = `请分析以下题目，提供详细的解题思路和知识点：
 
 题目：${sanitizePrompt(question.title)}
@@ -768,7 +742,7 @@ router.post('/analyze', async (req: AuthRequest, res: Response) => {
 router.post('/expand', async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, provider } = req.body;
-    
+
     const question = await getAccessibleQuestion(req.user!, questionId);
     if (!question) {
       res.status(404).json({ error: '题目不存在' });
@@ -799,7 +773,7 @@ router.post('/expand', async (req: AuthRequest, res: Response) => {
 router.post('/recommend', async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, provider } = req.body;
-    
+
     const question = await getAccessibleQuestion(req.user!, questionId);
     if (!question) {
       res.status(404).json({ error: '题目不存在' });
@@ -830,7 +804,7 @@ router.post('/recommend', async (req: AuthRequest, res: Response) => {
 router.post('/generate', requirePermission('ai_generate', '没有AI生题权限'), async (req: AuthRequest, res: Response) => {
   try {
     const { questionId, count, provider } = req.body;
-    
+
     const question = await getAccessibleQuestion(req.user!, questionId);
     if (!question) {
       res.status(404).json({ error: '题目不存在' });
@@ -925,10 +899,10 @@ router.post('/chat', requirePermission('ai_chat', '没有AI对话权限'), async
 router.post('/test-config', requirePermission('ai_config_manage', '没有AI配置权限'), async (req: AuthRequest, res: Response) => {
   try {
     const { configId } = req.body;
-    
+
     const configs = await db.getAIConfigsByUserId(req.user!.id);
     const config = configs.find(c => c.id === configId);
-    
+
     if (!config) {
       res.status(404).json({ error: '配置不存在' });
       return;
@@ -943,7 +917,7 @@ router.post('/test-config', requirePermission('ai_config_manage', '没有AI配�
       baseUrl,
       90000
     );
-    
+
     const testPrompt = '请回复"测试成功"';
     const result = await aiProvider.chat([{ role: 'user', content: testPrompt }]);
     await db.updateAIConfig(config.id, {
@@ -951,12 +925,12 @@ router.post('/test-config', requirePermission('ai_config_manage', '没有AI配�
       last_checked_at: new Date().toISOString(),
       last_check_error: '',
     });
-    
+
     res.json({ success: true, message: '配置测试成功', result });
   } catch (error) {
     console.error('Config test error:', error);
     const errorMessage = (error as Error).message;
-    
+
     if (errorMessage.includes('连接超时')) {
       res.status(500).json({ error: '配置测试失败：连接超时，请检查网络或API地址是否正确' });
     } else if (errorMessage.includes('连接被拒绝')) {
@@ -1000,11 +974,10 @@ router.post('/batch-generate', requirePermission('ai_generate', '没有AI生题�
 
 输出要求：
 1. 只返回 JSON 数组，不要输出 markdown，不要输出解释文字
-2. 每道题包含 title、content、answer、explanation、difficulty、tags
+2. 每道题包含 title、content、answer、explanation、difficulty
 3. difficulty 只能是 easy、medium、hard
 4. answer 要准确、精炼、适合背诵
 5. explanation 用于快速理解和记忆
-6. tags 必须是字符串数组，且每道题最多 5 个标签
 7. 题目不要重复，尽量覆盖不同考点
 
 附加条件：
@@ -1020,14 +993,12 @@ router.post('/batch-generate', requirePermission('ai_generate', '没有AI生题�
     "content": "说出 200、301、404、500 的含义。",
     "answer": "200 成功；301 永久重定向；404 资源不存在；500 服务器内部错误。",
     "explanation": "这是最常见的一组 HTTP 状态码，适合记忆排障。",
-    "difficulty": "easy",
-    "tags": ["HTTP", "状态码"]
+    "difficulty": "easy"
   }
 ]`;
 
     const result = await aiProvider.chat([{ role: 'user', content: prompt }]);
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const questions = applyTagAliasesToGeneratedQuestions(extractGeneratedQuestions(result), tagAliases);
+    const questions = extractGeneratedQuestions(result);
 
     res.json({ questions, raw: result });
   } catch (error) {
@@ -1052,7 +1023,6 @@ router.post('/polish-question', requirePermission('ai_polish', '没有AI润色�
     const userConfig = await db.getActiveAIConfig(req.user!.id);
     const providerName = sanitizePrompt(data.provider || userConfig?.id || config.ai.defaultProvider);
     const aiProvider = await aiService.getProvider(providerName, { userId: req.user!.id, role: req.user!.role });
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
 
     const polishInstructionMap: Record<'light' | 'deep', string> = {
       light: [
@@ -1071,7 +1041,7 @@ router.post('/polish-question', requirePermission('ai_polish', '没有AI润色�
 
     const prompt = `请润色这道题，返回 JSON 对象，不要输出解释文字。
 
-只返回字段：title、content、answer、explanation、difficulty、tags
+只返回字段：title、content、answer、explanation、difficulty
 
 规则：
 1. 不改变核心考点
@@ -1079,16 +1049,14 @@ router.post('/polish-question', requirePermission('ai_polish', '没有AI润色�
 3. answer 要更清晰完整，不能比原题更简略
 4. explanation 补充关键原理、易错点或记忆提示，控制在精炼范围内
 5. difficulty 只能是 easy、medium、hard
-6. tags 最多 5 个
-7. ${polishInstructionMap[data.mode]}
+6. ${polishInstructionMap[data.mode]}
 
 原题：
 title: ${sanitizePrompt(question.title)}
 content: ${sanitizePrompt(question.content)}
 answer: ${sanitizePrompt(question.answer)}
 explanation: ${sanitizePrompt(question.explanation || '')}
-difficulty: ${sanitizePrompt(question.difficulty)}
-tags: ${JSON.stringify(parseStoredTags(question.tags, tagAliases))}`;
+difficulty: ${sanitizePrompt(question.difficulty)}`;
 
     const result = await aiProvider.chat([{ role: 'user', content: prompt }]);
     const parsed = extractJsonObject(result, 'AI 未返回可解析的题目对象');
@@ -1098,7 +1066,6 @@ tags: ${JSON.stringify(parseStoredTags(question.tags, tagAliases))}`;
       answer: sanitizePrompt(parsed.answer || question.answer),
       explanation: parsed.explanation ? sanitizePrompt(parsed.explanation) : '',
       difficulty: ['easy', 'medium', 'hard'].includes(parsed.difficulty) ? parsed.difficulty : question.difficulty,
-      tags: normalizeTagsInput(Array.isArray(parsed.tags) ? parsed.tags : parseStoredTags(question.tags, tagAliases), tagAliases),
     };
     res.json({ question, draft, raw: result });
   } catch (error) {
@@ -1116,7 +1083,6 @@ router.post('/answer-drafts/raw', requirePermission('ai_polish', '没有AI润色
     const userConfig = await db.getActiveAIConfig(req.user!.id);
     const providerName = sanitizePrompt(data.provider || userConfig?.id || config.ai.defaultProvider);
     const aiProvider = await aiService.getProvider(providerName, { userId: req.user!.id, role: req.user!.role });
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
     const detail = data.mode === 'quick'
       ? '给出适合地铁速记的精炼答案，用 4 到 6 个短分句覆盖关键点；解析只写记忆提示。'
       : data.mode === 'teaching'
@@ -1131,15 +1097,14 @@ router.post('/answer-drafts/raw', requirePermission('ai_polish', '没有AI润色
 
 要求：
 1. 返回 {"questions": [...]}，数量和顺序必须与输入完全一致
-2. 每项必须包含 content、answer、explanation、difficulty、tags
+2. 每项必须包含 content、answer、explanation、difficulty
 3. content 原样返回，answer 必须准确且可独立理解
-4. tags 为 2 到 5 个短标签，不要使用“题目”“答案”等空泛词
-5. ${detail}
+4. ${detail}
 
 输入：${JSON.stringify(source)}
 `;
     const result = await aiProvider.chat([{ role: 'user', content: prompt }]);
-    const generated = applyTagAliasesToGeneratedQuestions(extractGeneratedQuestions(result), tagAliases);
+    const generated = extractGeneratedQuestions(result);
     if (generated.length !== data.questions.length) {
       throw new Error(`AI 返回 ${generated.length} 项，预期 ${data.questions.length} 项`);
     }
@@ -1149,7 +1114,6 @@ router.post('/answer-drafts/raw', requirePermission('ai_polish', '没有AI润色
         answer: draft.answer,
         explanation: draft.explanation || '',
         difficulty: draft.difficulty || data.questions[index].difficulty,
-        tags: draft.tags || [],
       })),
     });
   } catch (error) {
@@ -1207,8 +1171,6 @@ router.post('/answer-draft', requirePermission('ai_polish', '没有AI润色权�
     const userConfig = await db.getActiveAIConfig(req.user!.id);
     const providerName = sanitizePrompt(data.provider || userConfig?.id || config.ai.defaultProvider);
     const aiProvider = await aiService.getProvider(providerName, { userId: req.user!.id, role: req.user!.role });
-    const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-    const existingTags = parseStoredTags(question.tags, tagAliases);
 
     const modeInstructionMap: Record<'quick' | 'practice' | 'teaching', string> = {
       quick: [
@@ -1233,14 +1195,12 @@ router.post('/answer-draft', requirePermission('ai_polish', '没有AI润色权�
     const prompt = `请只为这道题生成新的答案草稿，返回 JSON 对象，不要输出任何解释文字。
 
 要求：
-1. 返回字段必须包含 answer、explanation、tags
+1. 返回字段必须包含 answer、explanation
 2. 只允许改写答案和解析，不要改写题目标题、题干、分类和难度
 3. 答案必须准确，且严格围绕当前题干作答，不要发散
 4. explanation 用于辅助理解，可为空字符串
 5. 不要参考原题已有答案和解析，不要改写、压缩或复述原答案；你需要仅根据题目标题和题干独立作答
-6. tags 为字符串数组，返回 0 到 5 个最合适的标签
-7. 如果原题没有标签，请主动生成 2 到 5 个高相关标签；如果原题已有标签，可保留或补充更合适的标签建议
-8. 输出必须是合法 JSON 对象
+6. 输出必须是合法 JSON 对象
 
 ${modeInstructionMap[data.mode]}
 
@@ -1248,13 +1208,11 @@ ${modeInstructionMap[data.mode]}
 title: ${sanitizePrompt(question.title)}
 content: ${sanitizePrompt(question.content)}
 difficulty: ${sanitizePrompt(question.difficulty)}
-existingTags: ${JSON.stringify(existingTags)}
 
 返回示例：
 {
   "answer": "示例答案",
-  "explanation": "示例解析",
-  "tags": ["tag1", "tag2"]
+  "explanation": "示例解析"
 }`;
 
     const result = await aiProvider.chat([{ role: 'user', content: prompt }]);
@@ -1262,7 +1220,6 @@ existingTags: ${JSON.stringify(existingTags)}
     const draft = {
       answer: sanitizePrompt(parsed.answer || question.answer),
       explanation: parsed.explanation ? sanitizePrompt(parsed.explanation) : '',
-      tags: normalizeTagsInput(Array.isArray(parsed.tags) ? parsed.tags : existingTags, tagAliases),
       mode: data.mode,
     };
 
@@ -1275,85 +1232,5 @@ existingTags: ${JSON.stringify(existingTags)}
     res.status(500).json({ error: 'AI答案生成失败: ' + (error as Error).message });
   }
 });
-
-router.post(
-  '/batch-tags',
-  requirePermission('question_batch_edit', '没有批量编辑题目权限'),
-  requirePermission('ai_polish', '没有AI润色权限'),
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const data = batchTagsSchema.parse(req.body);
-      const userConfig = await db.getActiveAIConfig(req.user!.id);
-      const providerName = sanitizePrompt(data.provider || userConfig?.id || config.ai.defaultProvider);
-      const aiProvider = await aiService.getProvider(providerName, { userId: req.user!.id, role: req.user!.role });
-      const tagAliases = parseTagAliasMap(await db.getSetting('tag_aliases'));
-      const results: Array<{ questionId: string; tags: string[] }> = [];
-      let updated = 0;
-
-      for (const questionId of data.ids) {
-        const question = await getAccessibleQuestion(req.user!, questionId);
-        if (!question) {
-          continue;
-        }
-
-        const existingTags = parseStoredTags(question.tags, tagAliases);
-        const prompt = `请只为这道题生成标签建议，返回 JSON 对象，不要输出任何解释文字。
-
-要求：
-1. 返回字段必须包含 tags
-2. tags 为字符串数组，返回 2 到 5 个最合适的标签
-3. 标签要短、清晰、可复用，优先使用知识点、技术名词、场景词
-4. 不要返回“题目”“答案”“练习”这类空泛标签
-5. 如果已有标签不准确，可以给出更合适的新标签
-6. 输出必须是合法 JSON 对象
-
-当前题目：
-title: ${sanitizePrompt(question.title)}
-content: ${sanitizePrompt(question.content)}
-answer: ${sanitizePrompt(question.answer)}
-explanation: ${sanitizePrompt(question.explanation || '')}
-difficulty: ${sanitizePrompt(question.difficulty)}
-existingTags: ${JSON.stringify(existingTags)}
-
-返回示例：
-{
-  "tags": ["tag1", "tag2", "tag3"]
-}`;
-
-        const result = await aiProvider.chat([{ role: 'user', content: prompt }]);
-        const parsed = extractJsonObject(result, 'AI 未返回可解析的标签对象');
-        const generatedTags = normalizeTagsInput(Array.isArray(parsed.tags) ? parsed.tags : [], tagAliases);
-        if (generatedTags.length === 0) {
-          continue;
-        }
-
-        const nextTags = data.mode === 'replace'
-          ? generatedTags
-          : normalizeTagsInput([...existingTags, ...generatedTags], tagAliases);
-
-        const nextValue = JSON.stringify(nextTags);
-        if (nextValue !== (question.tags || '[]')) {
-          await db.updateQuestion(question.id, { tags: nextValue }, { actorId: req.user!.id, source: 'ai-tags', expectedRevision: question.revision });
-          updated += 1;
-        }
-
-        results.push({ questionId: question.id, tags: nextTags });
-      }
-
-      res.json({
-        updated,
-        total: data.ids.length,
-        message: `已为 ${updated} 道题目更新 AI 标签`,
-        results,
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: '输入验证失败', details: error.errors });
-        return;
-      }
-      res.status(500).json({ error: 'AI批量生成标签失败: ' + (error as Error).message });
-    }
-  }
-);
 
 export default router;

@@ -2,7 +2,6 @@ import Database from 'better-sqlite3';
 import mysql from 'mysql2/promise';
 import type { ExecuteValues } from 'mysql2';
 import { config } from '../config/index.js';
-import { normalizeTagName, parseStoredTags } from '../utils/tags.js';
 import { decryptSecret, encryptSecret, protectStoredSecret } from '../utils/secretEncryption.js';
 import {
   User,
@@ -103,7 +102,6 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
   ai_generate: true,
   ai_config_manage: true,
   ai_chat: true,
-  tag_manage: true,
   duplicate_manage: true,
   backup_export: false,
   backup_restore: false,
@@ -127,7 +125,6 @@ const ADMIN_PERMISSIONS: UserPermissions = {
   ai_generate: true,
   ai_config_manage: true,
   ai_chat: true,
-  tag_manage: true,
   duplicate_manage: true,
   backup_export: true,
   backup_restore: true,
@@ -167,11 +164,11 @@ export class DatabaseManager {
   private async connectSQLite(): Promise<void> {
     const dbPath = this.databaseConfig.sqlite.path;
     const dbDir = path.dirname(dbPath);
-    
+
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true });
     }
-    
+
     this.sqliteDb = new Database(dbPath);
     this.sqliteDb.pragma('journal_mode = WAL');
     this.sqliteDb.pragma('foreign_keys = ON');
@@ -179,7 +176,7 @@ export class DatabaseManager {
 
   private async connectMySQL(): Promise<void> {
     const { host, port, user, password, database } = this.databaseConfig.mysql;
-    
+
     this.mysqlPool = mysql.createPool({
       host,
       port,
@@ -830,11 +827,14 @@ export class DatabaseManager {
       parsedPermissions = permissions;
     }
 
-    return {
+    const permissionsWithDefaults = {
       ...basePermissions,
       ...parsedPermissions,
       ...(role === 'admin' ? ADMIN_PERMISSIONS : {}),
     };
+    // Ignore retired permission keys from existing accounts and old backups.
+    return Object.fromEntries(Object.entries(permissionsWithDefaults)
+      .filter(([key]) => Object.hasOwn(basePermissions, key))) as unknown as UserPermissions;
   }
 
   private normalizeCategoryScopes(scopes?: string | string[] | null): string[] {
@@ -1064,7 +1064,7 @@ export class DatabaseManager {
     return this.get<Question>('SELECT * FROM questions WHERE id = ? AND user_id = ?', [id, userId]);
   }
 
-  private questionConditions(userId: string, filter?: { categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] }, allowedCategoryIds?: string[]) {
+  private questionConditions(userId: string, filter?: { categoryId?: string; difficulty?: string; keyword?: string }, allowedCategoryIds?: string[]) {
     const conditions: string[] = ['user_id = ?'];
     const params: unknown[] = [userId];
 
@@ -1083,11 +1083,6 @@ export class DatabaseManager {
     if (filter?.keyword) {
       conditions.push('(title LIKE ? OR content LIKE ? OR answer LIKE ? OR explanation LIKE ?)');
       params.push(`%${filter.keyword}%`, `%${filter.keyword}%`, `%${filter.keyword}%`, `%${filter.keyword}%`);
-    }
-    if (filter?.tags && filter.tags.length > 0) {
-      const tagConditions = filter.tags.map(() => 'tags LIKE ?').join(' OR ');
-      conditions.push(`(${tagConditions})`);
-      params.push(...filter.tags.map((tag) => `%"${tag}"%`));
     }
 
     const whereClause = conditions.join(' AND ');
@@ -1111,7 +1106,7 @@ export class DatabaseManager {
     return questions;
   }
 
-  async getQuestionPosition(id: string, userId: string, filter?: { categoryId?: string; tags?: string[] }, allowedCategoryIds?: string[]): Promise<number | null> {
+  async getQuestionPosition(id: string, userId: string, filter?: { categoryId?: string }, allowedCategoryIds?: string[]): Promise<number | null> {
     const { whereClause, params } = this.questionConditions(userId, filter, allowedCategoryIds);
     const current = await this.get<Question>(`SELECT * FROM questions WHERE ${whereClause} AND id = ?`, [...params, id]);
     if (!current) return null;
@@ -1119,7 +1114,7 @@ export class DatabaseManager {
     return count?.count || 0;
   }
 
-  async getAdjacentQuestion(id: string, userId: string, direction: 'next' | 'prev', filter?: { categoryId?: string; tags?: string[] }, allowedCategoryIds?: string[]): Promise<Question | null> {
+  async getAdjacentQuestion(id: string, userId: string, direction: 'next' | 'prev', filter?: { categoryId?: string }, allowedCategoryIds?: string[]): Promise<Question | null> {
     const { whereClause, params } = this.questionConditions(userId, filter, allowedCategoryIds);
     const current = await this.get<Question>(`SELECT * FROM questions WHERE ${whereClause} AND id = ?`, [...params, id]);
     if (!current) return null;
@@ -1132,7 +1127,7 @@ export class DatabaseManager {
     userId: string,
     page: number = 1,
     pageSize: number = 20,
-    filter?: { categoryId?: string; difficulty?: string; keyword?: string; tags?: string[] },
+    filter?: { categoryId?: string; difficulty?: string; keyword?: string },
     allowedCategoryIds?: string[]
   ): Promise<{ questions: Question[]; total: number }> {
     const { whereClause, params } = this.questionConditions(userId, filter, allowedCategoryIds);
@@ -1149,98 +1144,6 @@ export class DatabaseManager {
     );
 
     return { questions, total: countResult?.count || 0 };
-  }
-
-  async getQuestionTags(
-    userId: string,
-    filter?: { categoryId?: string; difficulty?: string; keyword?: string },
-    allowedCategoryIds?: string[]
-  ): Promise<{ name: string; count: number }[]> {
-    const conditions: string[] = ['user_id = ?'];
-    const params: unknown[] = [userId];
-
-    if (filter?.categoryId) {
-      conditions.push('category_id = ?');
-      params.push(filter.categoryId);
-    }
-    if (allowedCategoryIds && allowedCategoryIds.length > 0) {
-      conditions.push(`category_id IN (${allowedCategoryIds.map(() => '?').join(',')})`);
-      params.push(...allowedCategoryIds);
-    }
-    if (filter?.difficulty) {
-      conditions.push('difficulty = ?');
-      params.push(filter.difficulty);
-    }
-    if (filter?.keyword) {
-      conditions.push('(title LIKE ? OR content LIKE ? OR answer LIKE ? OR explanation LIKE ?)');
-      params.push(`%${filter.keyword}%`, `%${filter.keyword}%`, `%${filter.keyword}%`, `%${filter.keyword}%`);
-    }
-
-    const whereClause = conditions.join(' AND ');
-    const questions = await this.all<Question>(
-      `SELECT tags FROM questions WHERE ${whereClause}`,
-      params
-    );
-
-    const tagMap = new Map<string, number>();
-    for (const question of questions) {
-      for (const rawTag of parseStoredTags(question.tags)) {
-        const tag = normalizeTagName(rawTag);
-        if (!tag) continue;
-        tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
-      }
-    }
-
-    return Array.from(tagMap.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'));
-  }
-
-  async renameQuestionTag(userId: string, fromTag: string, toTag: string): Promise<number> {
-    const questions = await this.all<Question>(
-      'SELECT id, tags FROM questions WHERE user_id = ?',
-      [userId]
-    );
-
-    let updatedCount = 0;
-    const normalizedFromTag = normalizeTagName(fromTag);
-    const normalizedToTag = normalizeTagName(toTag);
-    for (const question of questions) {
-      const parsedTags = parseStoredTags(question.tags);
-
-      if (!parsedTags.includes(normalizedFromTag)) {
-        continue;
-      }
-
-      const nextTags = Array.from(new Set(parsedTags.map((tag) => (tag === normalizedFromTag ? normalizedToTag : normalizeTagName(tag))).filter(Boolean)));
-      await this.updateQuestion(question.id, { tags: JSON.stringify(nextTags) });
-      updatedCount += 1;
-    }
-
-    return updatedCount;
-  }
-
-  async deleteQuestionTag(userId: string, tagName: string): Promise<number> {
-    const questions = await this.all<Question>(
-      'SELECT id, tags FROM questions WHERE user_id = ?',
-      [userId]
-    );
-
-    let updatedCount = 0;
-    const normalizedTagName = normalizeTagName(tagName);
-    for (const question of questions) {
-      const parsedTags = parseStoredTags(question.tags);
-
-      if (!parsedTags.includes(normalizedTagName)) {
-        continue;
-      }
-
-      const nextTags = parsedTags.filter((tag) => tag !== normalizedTagName);
-      await this.updateQuestion(question.id, { tags: JSON.stringify(nextTags) });
-      updatedCount += 1;
-    }
-
-    return updatedCount;
   }
 
   async getQuestionVersions(id: string, page = 1, pageSize = 20, allowedCategoryIds?: string[]): Promise<{ data: QuestionVersion[]; total: number }> {
@@ -1267,7 +1170,7 @@ export class DatabaseManager {
   }
 
   async updateQuestion(id: string, data: Partial<Question>, options: { actorId?: string; source?: string; expectedRevision?: number; removeId?: string } = {}): Promise<Question | undefined> {
-    const editable = ['title', 'content', 'answer', 'explanation', 'difficulty', 'category_id', 'tags'] as const;
+    const editable = ['title', 'content', 'answer', 'explanation', 'difficulty', 'category_id'] as const;
     const prepare = (current: Question) => {
       if (options.expectedRevision !== undefined && options.expectedRevision !== current.revision) throw new Error('QUESTION_CONFLICT');
       const keys = editable.filter((key) => data[key] !== undefined && data[key] !== current[key]);

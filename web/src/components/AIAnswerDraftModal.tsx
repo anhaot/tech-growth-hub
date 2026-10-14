@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { aiApi, questionApi } from '@/api';
 import { AIModelOption, Question } from '@/types';
-import { useAuthStore } from '@/store';
-import { hasPermission } from '@/lib/permissions';
 import { getAvailableAIModels, getPreferredAIModel, resolveAIModel, savePreferredAIModel } from '@/lib/aiModels';
-import { MAX_QUESTION_TAGS, parseQuestionTags } from '@/lib/questionTags';
+
 import { renderSafeMarkdown } from '@/lib/renderMarkdown';
-import { applyTagSuggestion, getFilteredTagSuggestions } from '@/lib/tagSuggestions';
+
 import { formatStructuredDraftText } from '@/lib/aiDraftFormatting';
 import { LoadingSpinner } from '@/components/ui';
 import { toast } from 'react-hot-toast';
@@ -23,7 +21,7 @@ const aiGenerateModes: Array<{ value: AIGenerateMode; label: string }> = [
 interface AIAnswerDraftModalProps {
   isOpen: boolean;
   question: Question | null;
-  availableTags?: Array<{ name: string; count: number }>;
+
   onClose: () => void;
   onSaved: (payload: { answer: string; explanation: string }) => void;
   introText?: string;
@@ -32,12 +30,11 @@ interface AIAnswerDraftModalProps {
 const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
   isOpen,
   question,
-  availableTags = [],
   onClose,
   onSaved,
   introText = '只生成答案和解析，不改题干、标题和难度。',
 }) => {
-  const canEditTags = hasPermission(useAuthStore((state) => state.user), 'question_edit_meta');
+
   const generationSequence = useRef(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -50,16 +47,15 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
   const [draft, setDraft] = useState<null | {
     answer: string;
     explanation: string;
-    tags: string[];
+
     mode: AIGenerateMode;
   }>(null);
-  const [tagsInput, setTagsInput] = useState('');
 
   useEffect(() => {
     generationSequence.current++;
     setLoading(false);
     setDraft(null);
-    setTagsInput('');
+
     setRawResult('');
     setMode('practice');
     setSaveMode('replace');
@@ -98,9 +94,6 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
   }, [provider]);
 
   const currentModeMeta = aiGenerateModes.find((item) => item.value === mode);
-  const existingTags = question ? parseQuestionTags(question.tags) : [];
-  const selectedTags = parseQuestionTags(tagsInput);
-  const matchedTags = getFilteredTagSuggestions(tagsInput, availableTags);
 
   const handleGenerate = async () => {
     if (!question || loading || saving) return;
@@ -115,7 +108,7 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
         answer: formatStructuredDraftText(response.data.draft.answer),
         explanation: formatStructuredDraftText(response.data.draft.explanation),
       });
-      setTagsInput((response.data.draft.tags || []).join(', '));
+
       setRawResult(response.data.raw);
     } catch (error: any) {
       if (sequence === generationSequence.current) toast.error(error.response?.data?.error || 'AI答案生成失败');
@@ -132,14 +125,12 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
       const nextExplanation = saveMode === 'append' && question.explanation
         ? `${question.explanation}\n\n---\nAI补充（${currentModeMeta?.label || '新版本'}）\n${draft.explanation}`.trim()
         : draft.explanation;
-      const nextTags = Array.from(new Set([...existingTags, ...selectedTags])).slice(0, MAX_QUESTION_TAGS);
 
       await questionApi.update(question.id, {
           source: 'ai-answer',
           expectedRevision: question.revision,
         answer: draft.answer,
         explanation: nextExplanation,
-        ...(canEditTags ? { tags: nextTags } : {}),
       });
       toast.success('AI 答案已保存');
       onSaved({ answer: draft.answer, explanation: nextExplanation });
@@ -163,14 +154,6 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
     } catch {
       toast.error('复制失败，请检查浏览器权限');
     }
-  };
-
-  const toggleTag = (tag: string) => {
-    const current = parseQuestionTags(tagsInput);
-    const next = current.includes(tag)
-      ? current.filter((item) => item !== tag)
-      : [...current, tag].slice(0, MAX_QUESTION_TAGS);
-    setTagsInput(next.join(', '));
   };
 
   if (!isOpen || !question) return null;
@@ -215,7 +198,6 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                             setMode(modeOption.value);
                             setDraft(null);
                             setRawResult('');
-                            setTagsInput('');
                           }
                         }}
                         className={`rounded-xl border px-3 py-3 text-center transition-all ${
@@ -281,7 +263,7 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                 </div>
               ) : !draft ? (
                 <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center text-gray-500">
-                  先选择版本，再生成当前版本的答案、解析和标签建议。
+                  先选择版本，再生成当前版本的答案和解析。
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -326,76 +308,6 @@ const AIAnswerDraftModal: React.FC<AIAnswerDraftModalProps> = ({
                       className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm leading-6 text-gray-700 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/15"
                     />
                   </div>
-
-                  {canEditTags && <div>
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="text-sm font-semibold text-gray-900">标签建议</div>
-                      <span className="text-xs text-gray-500">可点选 AI 建议，也可手动补充标签</span>
-                    </div>
-                    {draft.tags.length > 0 ? (
-                      <div className="flex flex-wrap gap-2 rounded-2xl border border-gray-200 bg-white p-4">
-                        {draft.tags.map((tag) => {
-                          const active = selectedTags.includes(tag);
-                          return (
-                            <button
-                              key={tag}
-                              type="button"
-                              onClick={() => toggleTag(tag)}
-                              className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${
-                                active
-                                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-                                  : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-white'
-                              }`}
-                            >
-                              {tag}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-4 text-sm text-gray-500">
-                        当前版本未生成标签建议。
-                      </div>
-                    )}
-                    <div className="mt-3 space-y-3 rounded-2xl border border-gray-200 bg-white p-4">
-                      <div>
-                        <div className="mb-2 text-sm font-medium text-gray-700">手动补充标签</div>
-                        <input
-                          type="text"
-                          value={tagsInput}
-                          onChange={(e) => setTagsInput(e.target.value)}
-                          className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/15"
-                          placeholder="多个标签用逗号分隔，最多 5 个"
-                        />
-                      </div>
-                      {matchedTags.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {matchedTags.map((tag) => (
-                            <button
-                              key={`manual-${tag.name}`}
-                              type="button"
-                              onClick={() => setTagsInput((current) => applyTagSuggestion(current, tag.name))}
-                              className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600 transition-all hover:border-gray-300 hover:bg-white"
-                            >
-                              {tag.name}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      {selectedTags.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {selectedTags.map((tag) => (
-                            <span
-                              key={`selected-${tag}`}
-                              className="inline-flex items-center rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>}
 
                   <div>
                     <div className="mb-2 text-sm font-semibold text-gray-900">保存方式</div>

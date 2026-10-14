@@ -3,10 +3,9 @@ import { questionApi, categoryApi, aiApi } from '@/api';
 import { Question, Category, LearningProgress } from '@/types';
 import { useAIStore, useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
-import { getTagColorClasses } from '@/lib/tagColors';
-import { parseQuestionTags } from '@/lib/questionTags';
+
 import { renderSafeMarkdown } from '@/lib/renderMarkdown';
-import { applyTagSuggestion, getFilteredTagSuggestions } from '@/lib/tagSuggestions';
+
 import { toast } from 'react-hot-toast';
 import {
   ChevronLeft,
@@ -17,12 +16,9 @@ import {
   Brain,
   Sparkles,
   BookOpen,
-  Eye,
   Filter,
   Edit,
   X,
-  MapPin,
-  Tags,
   MoreHorizontal,
   Trash2,
 } from 'lucide-react';
@@ -50,7 +46,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const PAGE_SIZE = 100;
   const [questions, setQuestions] = useState<Question[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [availableTags, setAvailableTags] = useState<Array<{ name: string; count: number }>>([]);
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [jumpPosition, setJumpPosition] = useState('1');
   const progressSequence = useRef(0);
@@ -59,8 +55,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   const [showAnswer, setShowAnswer] = useState(false);
   const [progress, setProgress] = useState<LearningProgress | null>(null);
   const [categoryId, setCategoryId] = useState('');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
+
   const [showAI, setShowAI] = useState(false);
   const [showMobileQuestionActions, setShowMobileQuestionActions] = useState(false);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -79,7 +74,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     explanation: '',
     difficulty: 'medium' as 'easy' | 'medium' | 'hard',
     categoryId: '',
-    tags: '',
   });
 
   const modeLabel = mode === 'study' ? '背题模式' : '答题模式';
@@ -97,16 +91,16 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
       if (restorePosition) {
         const lastViewed = await questionApi.getLastViewed(mode, categoryId).catch(() => null);
         if (lastViewed?.data?.question_id) {
-          const position = await questionApi.getPosition(lastViewed.data.question_id, { categoryId, tags: selectedTags }).catch(() => null);
+          const position = await questionApi.getPosition(lastViewed.data.question_id, { categoryId,  }).catch(() => null);
           index = position?.data.index ?? 0;
         }
       }
-      let response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+      let response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId,  });
       if (sequence !== requestSequence.current) return;
       const lastIndex = Math.max(0, response.data.total - 1);
       if (index > lastIndex) {
         index = lastIndex;
-        response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+        response = await questionApi.getAll({ page: Math.floor(index / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId,  });
       }
       if (sequence !== requestSequence.current) return;
       setQuestions(response.data.data);
@@ -125,18 +119,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     } finally {
       if (sequence === requestSequence.current) { setLoading(false); setInitialized(true); }
     }
-  }, [categoryId, autoShowAnswer, mode, selectedTags]);
-
-  const fetchTags = useCallback(async () => {
-    try {
-      const response = await questionApi.getTags({
-        categoryId: categoryId || undefined,
-      });
-      setAvailableTags(response.data);
-    } catch (error) {
-      console.error('Failed to fetch tags:', error);
-    }
-  }, [categoryId]);
+  }, [categoryId, autoShowAnswer, mode]);
 
   const fetchCategories = async () => {
     try {
@@ -177,7 +160,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
         explanation: currentQuestion.explanation || '',
         difficulty: currentQuestion.difficulty,
         categoryId: currentQuestion.category_id || '',
-        tags: parseQuestionTags(currentQuestion.tags).join(', '),
       });
       setIsEditing(true);
     }
@@ -202,12 +184,11 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
         ...(canEditQuestionMeta ? {
           difficulty: editForm.difficulty,
           categoryId: editForm.categoryId,
-          tags: parseQuestionTags(editForm.tags),
         } : {}),
       });
-      
+
       setQuestions(prev => prev.map(q => q.id === currentQuestion.id ? response.data : q));
-      
+
       setIsEditing(false);
       toast.success('保存成功');
     } catch (error: any) {
@@ -218,10 +199,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   useEffect(() => {
     fetchCategories();
   }, []);
-
-  useEffect(() => {
-    fetchTags();
-  }, [fetchTags]);
 
   useEffect(() => {
     fetchQuestions();
@@ -307,7 +284,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
       setProgress(null);
       const nextIndex = Math.max(0, Math.min(currentIndex, totalQuestions - 2));
       await fetchQuestions(false, nextIndex);
-      void fetchTags();
     } catch (error: any) {
       if (removed) {
         toast.error('题目已删除，列表刷新失败，请重试');
@@ -318,11 +294,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
       setDeleting(false);
     }
   };
-  const currentQuestionTags = currentQuestion ? parseQuestionTags(currentQuestion.tags) : [];
-  const matchedEditTags = getFilteredTagSuggestions(editForm.tags, availableTags);
-  const browsePositionPercent = totalQuestions > 0
-    ? Math.round(((currentIndex + 1) / totalQuestions) * 100)
-    : 0;
+
   const ModeIcon = modeIcon;
   const navigateToIndex = async (nextIndex: number) => {
     if (navigationBusy.current || loading) return;
@@ -334,7 +306,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     try {
       if (boundedIndex < pageStart || boundedIndex >= pageStart + questions.length) {
         setLoading(true);
-        const response = await questionApi.getAll({ page: Math.floor(boundedIndex / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId, tags: selectedTags });
+        const response = await questionApi.getAll({ page: Math.floor(boundedIndex / PAGE_SIZE) + 1, pageSize: PAGE_SIZE, categoryId,  });
         if (sequence !== requestSequence.current) return;
         if (!response.data.data.length || boundedIndex >= response.data.total) {
           await fetchQuestions(false, Math.max(0, response.data.total - 1));
@@ -444,21 +416,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
       hard: { label: '困难', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' },
     };
     return configs[difficulty] || configs.medium;
-  };
-
-  const addFilterTag = (value: string) => {
-    const nextTag = value.trim();
-    if (!nextTag || selectedTags.includes(nextTag)) {
-      setTagInput('');
-      return;
-    }
-    setSelectedTags((prev) => [...prev, nextTag]);
-    setTagInput('');
-  };
-
-  const applyQuestionTagFilter = (tag: string) => {
-    setSelectedTags((prev) => (prev.length === 1 && prev[0] === tag ? [] : [tag]));
-    setTagInput('');
   };
 
   const mobileQuestionToolbar = (
@@ -581,12 +538,6 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
           </div>
         ) : null}
       </div>
-      <div className="h-0.5 bg-slate-100">
-        <div
-          className={`h-full ${mode === 'study' ? 'bg-emerald-500' : 'bg-blue-500'}`}
-          style={{ width: `${browsePositionPercent}%` }}
-        />
-      </div>
     </div>
   );
 
@@ -647,29 +598,10 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                 ))}
               </select>
             </div>
-            <div className="relative min-w-0">
-              <Tags className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
-              <input
-                type="text"
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
-                    e.preventDefault();
-                    addFilterTag(tagInput);
-                  }
-                }}
-                onBlur={() => {
-                  if (tagInput.trim()) addFilterTag(tagInput);
-                }}
-                placeholder="按标签学习"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-9 pr-4 text-slate-700 shadow-sm focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-500/10"
-              />
-            </div>
+
           </div>
       </div>
 
-      {currentQuestion ? <div className="flex justify-between items-center gap-2"><div className="flex items-center gap-2 lg:hidden"><input type="number" min={1} max={totalQuestions} value={jumpPosition} aria-label="跳转题号" onChange={(event) => setJumpPosition(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') jumpToQuestion(); }} className="input-field w-20" /><span className="text-sm">/{totalQuestions}</span><button className="text-sm text-primary-600" onClick={jumpToQuestion}>跳转</button></div><button className="text-sm text-primary-600 px-3 py-2" onClick={() => setHistoryOpen(true)}>版本历史</button></div> : null}
       <QuestionHistoryModal question={historyOpen ? currentQuestion : null} onClose={() => setHistoryOpen(false)} onRestored={(question) => { setQuestions((items) => items.map((item) => item.id === question.id ? question : item)); }} />
       {fetchError ? (
         <div className="surface-card flex min-h-64 flex-col items-center justify-center p-8 text-center">
@@ -696,69 +628,14 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
         </div>
       ) : (
         <>
-          <div className="surface-card hidden p-4 lg:flex lg:items-center lg:justify-between lg:gap-3">
-            <div className="flex items-center justify-between gap-3 lg:justify-start">
-              <div className="flex items-center gap-1.5 border-gray-200 bg-white lg:rounded-xl lg:border lg:px-4 lg:py-2 lg:shadow-sm">
-                <span className="text-sm text-gray-500">题目</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={totalQuestions}
-                  value={jumpPosition}
-                  aria-label="跳转题号"
-                  onChange={(e) => setJumpPosition(e.target.value)}
-                  onKeyDown={(event) => { if (event.key === 'Enter') jumpToQuestion(); }}
-                  className="w-20 border-0 bg-transparent text-center text-base font-bold text-gray-900 focus:outline-none focus:ring-0 lg:w-20 lg:text-lg"
-                />
-                <span className="text-sm text-gray-400">/ {totalQuestions}</span>
-                <button className="text-sm text-primary-600" onClick={jumpToQuestion}>跳转</button>
-              </div>
-              <div className="hidden items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 shadow-sm lg:flex">
-                <Eye size={16} className="text-gray-400" />
-                <span className="text-sm text-gray-600">已查看 {progress?.view_count || 0} 次</span>
-              </div>
-              <div className="hidden items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 shadow-sm lg:flex">
-                <MapPin size={16} className="text-blue-500" />
-                <span className="text-sm text-gray-600">浏览位置 {browsePositionPercent}%</span>
-              </div>
-              <span className="text-xs font-semibold text-blue-600 lg:hidden">{browsePositionPercent}%</span>
+          <div className="surface-card flex flex-wrap items-center justify-between gap-2 px-3 py-2 lg:px-4 lg:py-3" data-testid="learning-question-controls">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs lg:text-sm text-gray-500">题目</span>
+              <input type="number" min={1} max={totalQuestions} value={jumpPosition} aria-label="跳转题号" onChange={(event) => setJumpPosition(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') jumpToQuestion(); }} className="input-field w-14 px-1.5 lg:w-20" />
+              <span className="text-xs lg:text-sm text-gray-500">/ {totalQuestions}</span>
+              <button className="px-2 py-2 text-xs lg:text-sm text-primary-600" onClick={jumpToQuestion}>跳转</button>
             </div>
-            <div className="flex flex-1 flex-col gap-2 lg:gap-3 lg:items-end">
-              {currentQuestionTags.length > 0 ? (
-                <div className="mobile-scroll-row lg:flex lg:flex-wrap lg:justify-end lg:overflow-visible">
-                  {currentQuestionTags.map((tag) => (
-                    <button
-                      key={`${currentQuestion?.id}-${tag}`}
-                      onClick={() => applyQuestionTagFilter(tag)}
-                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all lg:px-3 lg:py-1.5 lg:text-xs ${getTagColorClasses(tag)} ${
-                        selectedTags.includes(tag)
-                          ? 'ring-2 ring-primary-300 shadow-sm scale-[1.02]'
-                          : 'opacity-80 hover:opacity-100 hover:brightness-95'
-                      }`}
-                      title={selectedTags.includes(tag) ? '再次点击取消该标签筛选' : '点击按该标签筛选'}
-                    >
-                      {selectedTags.includes(tag) ? (
-                        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white/80 text-[10px] text-primary-700">
-                          ✓
-                        </span>
-                      ) : null}
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 lg:h-2 lg:w-48">
-                <div
-                  aria-label="当前浏览位置"
-                  aria-valuemax={100}
-                  aria-valuemin={0}
-                  aria-valuenow={browsePositionPercent}
-                  className={`h-full rounded-full transition-all duration-300 ${mode === 'study' ? 'bg-gradient-to-r from-green-500 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`}
-                  role="progressbar"
-                  style={{ width: `${browsePositionPercent}%` }}
-                />
-              </div>
-            </div>
+            <button className="px-2 py-2 text-xs lg:text-sm text-primary-600" onClick={() => setHistoryOpen(true)}>版本历史</button>
           </div>
 
           <div
@@ -779,7 +656,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   </button>
                 </div>
                 {supplementField && <button type="button" onClick={() => { supplementPending.current?.abort(); supplementPending.current = null; setSupplementField(null); }} className="text-sm text-violet-600">取消AI生成</button>}
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">题目内容</label>
                   <textarea
@@ -790,7 +667,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                     rows={4}
                   />
                 </div>
-                
+
                 <div>
                   <div className="mb-1 flex items-center justify-between"><label className="text-sm font-medium text-gray-700">参考答案</label>{supplementButton('answer')}</div>
                   <textarea
@@ -802,7 +679,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   />
                   {previewFor('answer')}
                 </div>
-                
+
                 <div>
                   <div className="mb-1 flex items-center justify-between"><label className="text-sm font-medium text-gray-700">思路解析（可选）</label>{supplementButton('explanation')}</div>
                   <textarea
@@ -814,7 +691,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   />
                   {previewFor('explanation')}
                 </div>
-                
+
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700 mb-1">难度</label>
@@ -844,34 +721,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                     </select>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">标签</label>
-                  <input
-                    value={editForm.tags}
-                    onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-                    disabled={!canEditQuestionMeta}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 focus:bg-white transition-all"
-                    placeholder="多个标签用逗号分隔，最多 5 个"
-                  />
-                  {matchedEditTags.length > 0 && canEditQuestionMeta ? (
-                    <div className="mt-2 rounded-xl border border-gray-200 bg-white p-2">
-                      <div className="flex flex-wrap gap-2">
-                        {matchedEditTags.map((tag) => (
-                          <button
-                            key={tag.name}
-                            type="button"
-                            onClick={() => setEditForm((prev) => ({ ...prev, tags: applyTagSuggestion(prev.tags, tag.name) }))}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-700 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-                          >
-                            <span>{tag.name}</span>
-                            <span className="text-[11px] text-gray-400">{tag.count}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                
+
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     onClick={cancelEdit}

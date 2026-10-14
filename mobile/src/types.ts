@@ -50,7 +50,6 @@ export interface Question {
   explanation: string | null;
   difficulty: Difficulty;
   category_id: string | null;
-  tags: string;
 }
 export interface Progress {
   question_id: string;
@@ -76,7 +75,6 @@ export interface QuestionInput {
   explanation?: string;
   difficulty: Difficulty;
   categoryId?: string;
-  tags: string[];
 }
 export interface Session {
   server: string;
@@ -106,14 +104,4 @@ export function permitted(user: User, permission: string): boolean {
   return Boolean(
     compatible[permission]?.some((key) => user.permissions?.[key]),
   );
-}
-export function tagsOf(tags: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(tags);
-    return Array.isArray(parsed)
-      ? parsed.filter((tag): tag is string => typeof tag === "string")
-      : [];
-  } catch {
-    return [];
-  }
 }

@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { questionApi, categoryApi, importApi, aiApi } from '@/api';
 import { Question, Category, PaginatedResult, SimilarQuestionPair, DuplicateScanResult, AIModelOption } from '@/types';
-import { getAvailableAIModels, getPreferredAIModel, resolveAIModel, savePreferredAIModel } from '@/lib/aiModels';
 import { useAuthStore } from '@/store';
 import { hasPermission } from '@/lib/permissions';
-import { getTagColorClasses } from '@/lib/tagColors';
-import { MAX_QUESTION_TAGS, parseQuestionTags } from '@/lib/questionTags';
+
 import { renderSafeMarkdown } from '@/lib/renderMarkdown';
-import { applyTagSuggestion, getFilteredTagSuggestions } from '@/lib/tagSuggestions';
+
 import { formatStructuredDraftText } from '@/lib/aiDraftFormatting';
 import ImportModal from '@/components/ImportModal';
 import QuestionHistoryModal from '@/components/QuestionHistoryModal';
@@ -29,7 +27,6 @@ import {
   X,
   Check,
   Sparkles,
-  Tags,
   FileText,
   MoreHorizontal,
 } from 'lucide-react';
@@ -38,14 +35,12 @@ interface QuestionListFilter {
   categoryId: string;
   difficulty: string;
   keyword: string;
-  tags: string[];
 }
 
 const defaultQuestionFilter: QuestionListFilter = {
   categoryId: '',
   difficulty: '',
   keyword: '',
-  tags: [],
 };
 
 const questionListCache = new Map<string, PaginatedResult<Question>>();
@@ -62,7 +57,6 @@ const getQuestionListCacheKey = (
   filter.categoryId,
   filter.difficulty,
   filter.keyword,
-  filter.tags.join(','),
 ].join('|');
 
 export const QuestionsPage: React.FC = () => {
@@ -74,9 +68,8 @@ export const QuestionsPage: React.FC = () => {
   const canEditQuestionMeta = hasPermission(user, 'question_edit_meta');
   const canEditQuestions = canEditQuestionContent || canEditQuestionMeta;
   const canDeleteQuestions = hasPermission(user, 'question_delete');
-  const canBatchEditQuestions = hasPermission(user, 'question_batch_edit');
   const canExportQuestions = hasPermission(user, 'question_export');
-  const canSelectQuestions = canBatchEditQuestions || canDeleteQuestions;
+  const canSelectQuestions = canDeleteQuestions;
   const canImportQuestions = hasPermission(user, 'import_manage');
   const canUseAI = hasPermission(user, 'ai_use');
   const canGenerateQuestions = hasPermission(user, 'ai_generate');
@@ -88,15 +81,12 @@ export const QuestionsPage: React.FC = () => {
   const [loading, setLoading] = useState(!initialQuestionCache);
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState<QuestionListFilter>(defaultQuestionFilter);
-  const [tagInput, setTagInput] = useState('');
-  const [availableTags, setAvailableTags] = useState<Array<{ name: string; count: number }>>([]);
+
   const [showModal, setShowModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showAIGenerateModal, setShowAIGenerateModal] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
-  const [showBatchTagsModal, setShowBatchTagsModal] = useState(false);
-  const [batchTagsMode, setBatchTagsMode] = useState<'add' | 'remove' | 'replace'>('add');
-  const [showAIBatchTagsModal, setShowAIBatchTagsModal] = useState(false);
+
   const [showPolishModal, setShowPolishModal] = useState(false);
   const [polishQuestion, setPolishQuestion] = useState<Question | null>(null);
   const [showAnswerDraftModal, setShowAnswerDraftModal] = useState(false);
@@ -143,19 +133,6 @@ export const QuestionsPage: React.FC = () => {
       if (sequence === listSequence.current) toast.error('获取题目列表失败');
     } finally {
       if (sequence === listSequence.current) setLoading(false);
-    }
-  };
-
-  const fetchTags = async () => {
-    try {
-      const response = await questionApi.getTags({
-        categoryId: filter.categoryId || undefined,
-        difficulty: filter.difficulty || undefined,
-        keyword: filter.keyword || undefined,
-      });
-      setAvailableTags(response.data);
-    } catch (error) {
-      console.error('Failed to fetch tags:', error);
     }
   };
 
@@ -216,21 +193,6 @@ export const QuestionsPage: React.FC = () => {
     fetchQuestions();
   }, [page, filter, pageSize, cacheScope]);
 
-  useEffect(() => {
-    fetchTags();
-  }, [filter.categoryId, filter.difficulty, filter.keyword]);
-
-  const addFilterTag = (value: string) => {
-    const nextTag = value.trim();
-    if (!nextTag || filter.tags.includes(nextTag)) {
-      setTagInput('');
-      return;
-    }
-    setPage(1);
-    setFilter((prev) => ({ ...prev, tags: [...prev.tags, nextTag] }));
-    setTagInput('');
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm('确定要删除这道题目吗？')) return;
 
@@ -261,15 +223,6 @@ export const QuestionsPage: React.FC = () => {
     }
   };
 
-  const openBatchTagsModal = (mode: 'add' | 'remove' | 'replace') => {
-    if (selectedIds.length === 0) {
-      toast.error('请先选择题目');
-      return;
-    }
-    setBatchTagsMode(mode);
-    setShowBatchTagsModal(true);
-  };
-
   const openPolishModal = (question: Question) => {
     setPolishQuestion(question);
     setShowPolishModal(true);
@@ -281,7 +234,7 @@ export const QuestionsPage: React.FC = () => {
   };
 
   const handleMergeDuplicate = async (keepId: string, removeId: string) => {
-    if (!confirm('确定保留当前题，并把另一题的标签/分类/解析合并后删除另一题吗？')) {
+    if (!confirm('确定保留当前题，并把另一题的分类/解析合并后删除另一题吗？')) {
       return;
     }
 
@@ -318,7 +271,7 @@ export const QuestionsPage: React.FC = () => {
     try {
       const result = await questionApi.export(filter.categoryId);
       const exportData = result.data.questions;
-      
+
       const markdown = exportData.map((q: any) => {
         let text = `**${q.title}**\n`;
         if (q.content && q.content !== q.title) {
@@ -339,7 +292,7 @@ export const QuestionsPage: React.FC = () => {
       a.download = `题库导出_${new Date().toISOString().split('T')[0]}.${exportFormat === 'json' ? 'json' : 'md'}`;
       a.click();
       URL.revokeObjectURL(url);
-      
+
       toast.success(`已导出 ${result.data.total} 道题目`);
     } catch (error) {
       toast.error('导出失败');
@@ -397,7 +350,7 @@ export const QuestionsPage: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900 lg:text-2xl">题库</h1>
-            <p className="text-xs text-gray-500 lg:text-sm">共 {questions?.total || 0} 道题目<span className="hidden lg:inline"> · 管理题目、导入内容和标签筛选</span></p>
+            <p className="text-xs text-gray-500 lg:text-sm">共 {questions?.total || 0} 道题目<span className="hidden lg:inline"> · 管理题目、导入内容和分类</span></p>
           </div>
         </div>
           <div className="flex flex-wrap justify-end gap-2">
@@ -487,7 +440,7 @@ export const QuestionsPage: React.FC = () => {
               type="button"
               onClick={() => setShowMobileFilters((value) => !value)}
               className={`inline-flex h-12 shrink-0 items-center gap-1.5 rounded-xl border px-3 font-medium lg:hidden ${
-                showMobileFilters || filter.tags.length > 0 || filter.categoryId || filter.difficulty
+                showMobileFilters || filter.categoryId || filter.difficulty
                   ? 'border-purple-200 bg-purple-50 text-purple-700'
                   : 'border-slate-200 bg-white text-slate-600'
               }`}
@@ -496,28 +449,8 @@ export const QuestionsPage: React.FC = () => {
               筛选
             </button>
           </div>
-          <div className={`${showMobileFilters ? 'grid' : 'hidden'} mt-3 gap-3 lg:grid lg:grid-cols-[1fr_1fr_1fr_auto]`}>
-            <div className="relative">
-              <Tags className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-              <input
-                type="text"
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
-                    e.preventDefault();
-                    addFilterTag(tagInput);
-                  }
-                }}
-                onBlur={() => {
-                  if (tagInput.trim()) {
-                    addFilterTag(tagInput);
-                  }
-                }}
-                className="w-full rounded-xl border border-gray-200 bg-white pl-11 pr-4 py-3 text-gray-900 placeholder-gray-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition-all"
-                placeholder="标签筛选"
-              />
-            </div>
+          <div className={`${showMobileFilters ? 'grid' : 'hidden'} mt-3 gap-3 lg:grid lg:grid-cols-2`}>
+
             <div className="relative">
               <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
               <select
@@ -547,17 +480,7 @@ export const QuestionsPage: React.FC = () => {
               <option value="medium">中等</option>
               <option value="hard">困难</option>
             </select>
-            {filter.tags.length > 0 ? (
-              <button
-                onClick={() => {
-                  setPage(1);
-                  setFilter((prev) => ({ ...prev, tags: [] }));
-                }}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-gray-600 transition-all hover:bg-gray-50"
-              >
-                清空标签
-              </button>
-            ) : null}
+
           </div>
         </div>
 
@@ -567,40 +490,7 @@ export const QuestionsPage: React.FC = () => {
               已选择 <span className="font-bold">{selectedIds.length}</span> 道题目
             </span>
             <div className="mobile-scroll-row w-full lg:w-auto lg:flex-wrap lg:items-center lg:justify-end lg:overflow-visible">
-              {canBatchEditQuestions ? (
-                <>
-                  {canAIPolish ? (
-                    <button
-                      onClick={() => setShowAIBatchTagsModal(true)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-violet-700 border border-violet-200 rounded-lg text-sm hover:bg-violet-50 transition-colors"
-                    >
-                      <Sparkles size={14} />
-                      AI批量标签
-                    </button>
-                  ) : null}
-                  <button
-                    onClick={() => openBatchTagsModal('add')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-700 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-                  >
-                    <Tags size={14} />
-                    批量加标签
-                  </button>
-                  <button
-                    onClick={() => openBatchTagsModal('remove')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-700 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-                  >
-                    <Tags size={14} />
-                    批量删标签
-                  </button>
-                  <button
-                    onClick={() => openBatchTagsModal('replace')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-700 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-                  >
-                    <Tags size={14} />
-                    批量替换标签
-                  </button>
-                </>
-              ) : null}
+
               {canDeleteQuestions ? (
                 <button
                   onClick={handleBatchDelete}
@@ -805,18 +695,7 @@ export const QuestionsPage: React.FC = () => {
                               {question.content.substring(0, 150)}
                               {question.content.length > 150 && '...'}
                             </p>
-                            {parseQuestionTags(question.tags).length > 0 ? (
-                              <div className="flex flex-wrap gap-2">
-                                {parseQuestionTags(question.tags).map((tag) => (
-                                  <span
-                                    key={`${question.id}-${tag}`}
-                                    className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs ${getTagColorClasses(tag)}`}
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
+
                           </div>
                         </td>
                         <td className="py-4 px-4">
@@ -928,7 +807,6 @@ export const QuestionsPage: React.FC = () => {
         onClose={() => setShowModal(false)}
         question={editingQuestion}
         categories={categories}
-        availableTags={availableTags}
         canEditContent={canEditQuestionContent}
         canEditMeta={canEditQuestionMeta}
         onSuccess={() => {
@@ -969,20 +847,6 @@ export const QuestionsPage: React.FC = () => {
         onMergeDuplicate={handleMergeDuplicate}
       />
 
-      <BatchTagsModal
-        isOpen={showBatchTagsModal}
-        mode={batchTagsMode}
-        selectedCount={selectedIds.length}
-        availableTags={availableTags}
-        onClose={() => setShowBatchTagsModal(false)}
-        onSubmit={async (tags) => {
-          const response = await questionApi.batchTags({ ids: selectedIds, mode: batchTagsMode, tags });
-          toast.success(response.data.message);
-          setShowBatchTagsModal(false);
-          fetchQuestions();
-        }}
-      />
-
       <AIPolishModal
         isOpen={showPolishModal}
         question={polishQuestion}
@@ -1000,7 +864,6 @@ export const QuestionsPage: React.FC = () => {
       <AIAnswerDraftModal
         isOpen={showAnswerDraftModal}
         question={answerDraftQuestion}
-        availableTags={availableTags}
         onClose={() => {
           setShowAnswerDraftModal(false);
           setAnswerDraftQuestion(null);
@@ -1010,24 +873,9 @@ export const QuestionsPage: React.FC = () => {
           setAnswerDraftQuestion(null);
           fetchQuestions();
         }}
-        introText="只生成答案和解析，可顺手补充标签，不改题干、标题和难度。"
+        introText="只生成答案和解析，不改题干、标题和难度。"
       />
 
-      <AIBatchTagsModal
-        isOpen={showAIBatchTagsModal}
-        selectedCount={selectedIds.length}
-        onClose={() => setShowAIBatchTagsModal(false)}
-        onSubmit={async (mode, provider) => {
-          const response = await aiApi.batchGenerateTags({
-            ids: selectedIds,
-            mode,
-            provider: provider || undefined,
-          });
-          toast.success(response.data.message);
-          setShowAIBatchTagsModal(false);
-          fetchQuestions();
-        }}
-      />
     </div>
   );
 };
@@ -1037,7 +885,7 @@ interface QuestionModalProps {
   onClose: () => void;
   question: Question | null;
   categories: Category[];
-  availableTags: Array<{ name: string; count: number }>;
+
   canEditContent: boolean;
   canEditMeta: boolean;
   onSuccess: () => void;
@@ -1048,7 +896,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
   onClose,
   question,
   categories,
-  availableTags,
   canEditContent,
   canEditMeta,
   onSuccess,
@@ -1061,7 +908,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
     explanation: '',
     difficulty: 'medium',
     categoryId: '',
-    tags: '',
   });
 
   useEffect(() => {
@@ -1072,7 +918,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         explanation: question.explanation || '',
         difficulty: question.difficulty,
         categoryId: question.category_id || '',
-        tags: parseQuestionTags(question.tags).join(', '),
       });
     } else {
       setFormData({
@@ -1081,12 +926,9 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         explanation: '',
         difficulty: 'medium',
         categoryId: '',
-        tags: '',
       });
     }
   }, [question]);
-
-  const matchedTags = getFilteredTagSuggestions(formData.tags, availableTags);
 
   const handleGenerateAnswer = async () => {
     if (!formData.content.trim()) {
@@ -1110,7 +952,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         answer: draft.answer,
         explanation: draft.explanation,
         difficulty: draft.difficulty,
-        tags: draft.tags.join(', '),
       }));
       toast.success('AI 答案已生成，请检查后保存');
     } catch (error: any) {
@@ -1133,7 +974,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
           explanation: string;
           difficulty: string;
           categoryId: string;
-          tags: string[];
         }> = {};
         if (canEditContent) {
           data.title = formData.content.substring(0, 100);
@@ -1144,7 +984,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         if (canEditMeta) {
           data.difficulty = formData.difficulty;
           data.categoryId = formData.categoryId;
-          data.tags = parseQuestionTags(formData.tags);
         }
         await questionApi.update(question.id, {
           ...data, expectedRevision: question.revision });
@@ -1157,7 +996,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
           explanation: formData.explanation || undefined,
           difficulty: formData.difficulty,
           categoryId: formData.categoryId || undefined,
-          tags: parseQuestionTags(formData.tags),
         });
         toast.success('创建成功');
       }
@@ -1261,35 +1099,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
               </select>
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">标签</label>
-            <input
-              data-testid="question-tags-input"
-              type="text"
-              value={formData.tags}
-              onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-              disabled={Boolean(question) && !canEditMeta}
-              placeholder="多个标签用逗号分隔，最多 5 个，例如：HTTP, 状态码, 基础"
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all"
-            />
-            {matchedTags.length > 0 && (!question || canEditMeta) ? (
-              <div className="mt-2 rounded-xl border border-gray-200 bg-white p-2">
-                <div className="flex flex-wrap gap-2">
-                  {matchedTags.map((tag) => (
-                    <button
-                      key={tag.name}
-                      type="button"
-                      onClick={() => setFormData((prev) => ({ ...prev, tags: applyTagSuggestion(prev.tags, tag.name) }))}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-700 transition-colors hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700"
-                    >
-                      <span>{tag.name}</span>
-                      <span className="text-[11px] text-gray-400">{tag.count}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
+
         </form>
 
         <div className="flex flex-col-reverse justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-4 py-4 sm:flex-row sm:px-6">
@@ -1431,7 +1241,7 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
                                 </button>
                                 <button
                                   disabled={!canMerge}
-                                  onClick={() => { if (window.confirm("确认保留此题并合并标签、解析和分类，随后删除另一题？")) onMergeDuplicate(item.id, itemIndex === 0 ? pair.right.id : pair.left.id); }}
+                                  onClick={() => { if (window.confirm("确认保留此题并合并解析和分类，随后删除另一题？")) onMergeDuplicate(item.id, itemIndex === 0 ? pair.right.id : pair.left.id); }}
                                   className="px-3 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-lg text-sm hover:bg-blue-50 transition-colors"
                                 >
                                   保留并合并
@@ -1465,276 +1275,12 @@ const DuplicateModal: React.FC<DuplicateModalProps> = ({ isOpen, onClose, duplic
   );
 };
 
-interface BatchTagsModalProps {
-  isOpen: boolean;
-  mode: 'add' | 'remove' | 'replace';
-  selectedCount: number;
-  availableTags: Array<{ name: string; count: number }>;
-  onClose: () => void;
-  onSubmit: (tags: string[]) => Promise<void>;
-}
-
-const BatchTagsModal: React.FC<BatchTagsModalProps> = ({ isOpen, mode, selectedCount, availableTags, onClose, onSubmit }) => {
-  const [tagsInput, setTagsInput] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setTagsInput('');
-    }
-  }, [isOpen, mode]);
-
-  if (!isOpen) return null;
-
-  const title = mode === 'add' ? '批量添加标签' : mode === 'remove' ? '批量移除标签' : '批量替换标签';
-  const helperText = mode === 'add'
-    ? '会把这些标签追加到已选题目上'
-    : mode === 'remove'
-      ? '会从已选题目中移除这些标签'
-      : '会用这些标签替换已选题目的原有标签';
-  const matchedTags = getFilteredTagSuggestions(tagsInput, availableTags);
-
-  const handleSubmit = async () => {
-    const tags = parseQuestionTags(tagsInput);
-    if (tags.length === 0) {
-      toast.error('请输入有效标签');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await onSubmit(tags);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-transparent" onClick={onClose} />
-      <div className="relative flex min-h-full items-center justify-center px-4 py-6">
-        <div className="app-modal-panel w-full max-w-lg overflow-hidden">
-          <div className="app-modal-header flex items-center justify-between px-6 py-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-              <p className="text-sm text-gray-500">已选 {selectedCount} 道题，{helperText}</p>
-            </div>
-            <button onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
-              <X size={20} />
-            </button>
-          </div>
-          <div className="space-y-4 p-6">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">标签</label>
-              <input
-                type="text"
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="多个标签用逗号分隔，最多 5 个"
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 placeholder-gray-400 transition-all focus:border-primary-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-              />
-              {matchedTags.length > 0 ? (
-                <div className="mt-2 rounded-xl border border-gray-200 bg-white p-2">
-                  <div className="flex flex-wrap gap-2">
-                    {matchedTags.map((tag) => (
-                      <button
-                        key={tag.name}
-                        type="button"
-                        onClick={() => setTagsInput((current) => applyTagSuggestion(current, tag.name))}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-700 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-                      >
-                        <span>{tag.name}</span>
-                        <span className="text-[11px] text-gray-400">{tag.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-6 py-4">
-            <button onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-gray-700 transition-all hover:bg-gray-50">
-              取消
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="rounded-xl bg-primary-600 px-5 py-2.5 text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? '处理中...' : '确认'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 interface AIPolishModalProps {
   isOpen: boolean;
   question: Question | null;
   onClose: () => void;
   onSaved: () => void;
 }
-
-interface AIBatchTagsModalProps {
-  isOpen: boolean;
-  selectedCount: number;
-  onClose: () => void;
-  onSubmit: (mode: 'add' | 'replace', provider?: string) => Promise<void>;
-}
-
-const AIBatchTagsModal: React.FC<AIBatchTagsModalProps> = ({ isOpen, selectedCount, onClose, onSubmit }) => {
-  const [loading, setLoading] = useState(false);
-  const [configsLoading, setConfigsLoading] = useState(false);
-  const [aiConfigs, setAiConfigs] = useState<AIModelOption[]>([]);
-  const [provider, setProvider] = useState(getPreferredAIModel);
-  const [saveMode, setSaveMode] = useState<'add' | 'replace'>('add');
-
-  useEffect(() => {
-    if (!isOpen) {
-      setSaveMode('add');
-      return;
-    }
-
-    let active = true;
-    setConfigsLoading(true);
-    aiApi.getStatus()
-      .then((response) => {
-        if (!active) return;
-        setAiConfigs(getAvailableAIModels(response.data));
-        setProvider((current) => resolveAIModel(response.data, current));
-      })
-      .catch(() => {
-        if (active) {
-          setAiConfigs([]);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setConfigsLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [isOpen]);
-
-  useEffect(() => {
-    savePreferredAIModel(provider);
-  }, [provider]);
-
-  if (!isOpen) return null;
-
-  const handleSubmit = async () => {
-    setLoading(true);
-    try {
-      await onSubmit(saveMode, provider || undefined);
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || 'AI批量标签失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/20" onClick={onClose} />
-      <div className="relative flex min-h-full items-center justify-center px-4 py-6">
-        <div className="app-modal-panel flex w-full max-w-2xl flex-col overflow-hidden">
-          <div className="app-modal-header flex items-center justify-between px-6 py-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">AI 批量标签</h2>
-              <p className="text-sm text-gray-500">为已选择的 {selectedCount} 道题目批量生成标签并直接写回题库。</p>
-            </div>
-            <button onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
-              <X size={20} />
-            </button>
-          </div>
-
-          <div className="space-y-5 p-6">
-            <div>
-              <div className="mb-2 text-sm font-medium text-gray-700">保存方式</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => setSaveMode('add')}
-                  className={`rounded-xl border px-4 py-3 text-left transition-all ${
-                    saveMode === 'add'
-                      ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-500/10'
-                      : 'border-gray-200 bg-white hover:border-gray-300'
-                  }`}
-                >
-                  <div className="text-sm font-medium text-gray-900">追加到原标签</div>
-                  <div className="mt-1 text-xs leading-5 text-gray-500">保留原有标签，并补充 AI 生成的新标签。</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSaveMode('replace')}
-                  className={`rounded-xl border px-4 py-3 text-left transition-all ${
-                    saveMode === 'replace'
-                      ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-500/10'
-                      : 'border-gray-200 bg-white hover:border-gray-300'
-                  }`}
-                >
-                  <div className="text-sm font-medium text-gray-900">覆盖为 AI 标签</div>
-                  <div className="mt-1 text-xs leading-5 text-gray-500">直接用 AI 标签替换当前标签，适合老题库统一整理。</div>
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-2 text-sm font-medium text-gray-700">临时模型</div>
-              {configsLoading ? (
-                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
-                  正在加载模型配置...
-                </div>
-              ) : aiConfigs.length > 0 ? (
-                <select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  className="select-field w-full px-4 py-3 pr-10 bg-white text-gray-700"
-                >
-                  {aiConfigs.map((config) => {
-                    const value = config.id;
-                    return (
-                      <option key={config.id} value={value}>
-                        {config.label}
-                        {config.isActive ? '（当前默认）' : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-              ) : (
-                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
-                  未读取到可用模型，将使用当前默认配置。
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-dashed border-violet-200 bg-violet-50/60 p-4 text-sm leading-6 text-violet-800">
-              批量标签会根据题目内容、答案和解析生成更适合检索的知识点标签。批量处理可能需要几十秒，保存后会自动刷新列表。
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-6 py-4">
-            <button onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-gray-700 transition-all hover:bg-gray-50">
-              取消
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="rounded-xl bg-violet-600 px-5 py-2.5 text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? '处理中...' : '开始批量生成'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose, onSaved }) => {
   const onCloseRef = useRef(onClose);
@@ -1743,20 +1289,19 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
   const [saving, setSaving] = useState(false);
   const [slowLoading, setSlowLoading] = useState(false);
   const [mode, setMode] = useState<'light' | 'deep'>('light');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
   const [draft, setDraft] = useState<null | {
     title: string;
     content: string;
     answer: string;
     explanation: string;
     difficulty: 'easy' | 'medium' | 'hard';
-    tags: string[];
   }>(null);
 
   useEffect(() => {
     if (!isOpen || !question) {
       setDraft(null);
-      setSelectedTags([]);
+
       setMode('light');
       return;
     }
@@ -1782,7 +1327,6 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
             answer: formatStructuredDraftText(response.data.draft.answer),
             explanation: formatStructuredDraftText(response.data.draft.explanation),
           });
-          setSelectedTags(response.data.draft.tags || []);
         }
       })
       .catch((error: any) => {
@@ -1822,7 +1366,6 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
         answer: draft.answer,
         explanation: draft.explanation,
         difficulty: draft.difficulty,
-        tags: selectedTags,
       });
       toast.success('AI 润色已保存');
       onSaved();
@@ -1860,14 +1403,6 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
       />
     </div>
   );
-
-  const toggleTag = (tag: string) => {
-    setSelectedTags((current) => (
-      current.includes(tag)
-        ? current.filter((item) => item !== tag)
-        : [...current, tag].slice(0, MAX_QUESTION_TAGS)
-    ));
-  };
 
   return (
     <div className="fixed inset-0 z-50">
@@ -1928,34 +1463,7 @@ const AIPolishModal: React.FC<AIPolishModalProps> = ({ isOpen, question, onClose
                     <span className="inline-flex rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-600">{draft.difficulty}</span>
                   </div>
                 </div>
-                <div>
-                  <div className="mb-2 text-sm font-medium text-gray-700">标签建议</div>
-                  {draft.tags.length > 0 ? (
-                    <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3">
-                      {draft.tags.map((tag) => {
-                        const active = selectedTags.includes(tag);
-                        return (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => toggleTag(tag)}
-                            className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${
-                              active
-                                ? 'border-violet-300 bg-violet-50 text-violet-700'
-                                : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-white'
-                            }`}
-                          >
-                            {tag}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-gray-200 bg-white p-3 text-sm text-gray-500">
-                      当前润色结果没有标签建议。
-                    </div>
-                  )}
-                </div>
+
                 {renderDraftTextarea('题目内容', draft.content, (content) => setDraft((current) => (current ? { ...current, content } : current)), 4)}
                 {renderDraftTextarea('答案', draft.answer, (answer) => setDraft((current) => (current ? { ...current, answer } : current)), 6)}
                 {renderDraftTextarea('解析', draft.explanation || '', (explanation) => setDraft((current) => (current ? { ...current, explanation } : current)), 8)}
@@ -1994,7 +1502,6 @@ type GeneratedQuestion = {
   answer: string;
   explanation?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
-  tags?: string[];
 };
 
 const batchGenerateModes = [
@@ -2068,7 +1575,6 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
     answer: question.answer,
     explanation: question.explanation || '',
     difficulty: question.difficulty || 'medium',
-    tags: (question.tags || []).slice(0, MAX_QUESTION_TAGS),
   });
 
   const handleGenerate = async () => {
@@ -2336,11 +1842,7 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
                         <span className="inline-flex px-2.5 py-1 rounded-lg text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
                           {question.difficulty || 'medium'}
                         </span>
-                        {(question.tags || []).slice(0, 4).map((tag) => (
-                          <span key={tag} className="inline-flex px-2 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                            {tag}
-                          </span>
-                        ))}
+
                       </div>
                       <button
                         onClick={() => handleImportSingle(question, index)}

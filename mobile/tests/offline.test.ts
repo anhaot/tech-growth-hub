@@ -13,7 +13,6 @@ const questions: Question[] = [
     explanation: "观察进程",
     difficulty: "easy",
     category_id: "linux",
-    tags: '["运维"]',
   },
   {
     id: "q-2",
@@ -23,7 +22,6 @@ const questions: Question[] = [
     explanation: "检查 available",
     difficulty: "hard",
     category_id: "linux",
-    tags: "[]",
   },
   {
     id: "q-3",
@@ -33,7 +31,6 @@ const questions: Question[] = [
     explanation: "查看监听状态",
     difficulty: "medium",
     category_id: "network",
-    tags: "[]",
   },
 ];
 const categories: Category[] = [
@@ -140,6 +137,21 @@ test("fresh cache survives cold starts and foreground events without full downlo
   assert.equal(f.calls.filter((call) => call === "questions").length, 1);
   await restarted.sync();
   assert.equal(f.calls.filter((call) => call === "questions").length, 2);
+});
+
+test("legacy offline snapshots remain readable but retired tags no longer participate in search", async (t) => {
+  const f = fixture(t);
+  await f.repository.sync();
+  const saved = JSON.parse(f.values.get(f.repository.key)!);
+  saved.questions[0].tags = '["legacy-only-keyword"]';
+  f.values.set(f.repository.key, JSON.stringify(saved));
+  f.online.value = false;
+  const restarted = new StudyRepository(f.api, f.storage, "user-1");
+  await restarted.restore();
+  assert.equal((await restarted.questions()).total, 3);
+  assert.equal((await restarted.questions(1, { categoryId: "linux" })).total, 2);
+  assert.equal((await restarted.questions(1, { keyword: "legacy-only-keyword" })).total, 0);
+  assert.equal((await restarted.questions(1, { keyword: "CPU" })).total, 1);
 });
 
 test("batch bookmark cancellation persists without recording visits and does not reappear on sync", async (t) => {

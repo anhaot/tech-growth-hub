@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApiClient, ApiError, AIEmptyAnswerError, normalizeServer } from "../src/api";
-import { permitted, tagsOf, type User } from "../src/types";
+import { permitted, type User } from "../src/types";
 
 test("service URL normalization accepts a deployment prefix and removes /api", () => {
   assert.equal(
@@ -262,7 +262,7 @@ test("authentication errors retain their HTTP status for HTML and null response 
   assert.deepEqual(errors, [401, 428]);
 });
 
-test("permission compatibility and malformed legacy tags are handled", () => {
+test("permission compatibility is handled", () => {
   const user = {
     role: "user",
     permissions: { question_create: true },
@@ -270,8 +270,6 @@ test("permission compatibility and malformed legacy tags are handled", () => {
   assert.equal(permitted(user, "question_view"), true);
   assert.equal(permitted(user, "category_view"), false);
   assert.equal(permitted({ ...user, role: "admin" }, "system_manage"), true);
-  assert.deepEqual(tagsOf('["Linux",2]'), ["Linux"]);
-  assert.deepEqual(tagsOf("broken JSON"), []);
 });
 
 test("AI response validation preserves structured answer text and rejects empty or reasoning-only replies", async (t) => {

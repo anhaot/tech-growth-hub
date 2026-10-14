@@ -66,7 +66,7 @@ test('MySQL backup restoration preserves timestamp-shaped content and fractional
     assert.equal(afterProgress?.last_viewed_at, beforeProgress?.last_viewed_at);
     assert.equal(afterProgress?.view_count, beforeProgress?.view_count);
     assert.equal(Boolean((await db.getLearningProgress(userId, question.id, 'quiz'))?.is_bookmarked), true);
-    await db.updateQuestion(question.id, { tags: '["backup"]' }, { expectedRevision: 1 });
+    await db.updateQuestion(question.id, { title: 'Backup revision' }, { expectedRevision: 1 });
     await db.run('UPDATE question_versions SET created_at = ? WHERE question_id = ? AND version = ?', [literal, question.id, 2]);
     await db.setSetting(`timestamp:${userId}`, literal);
     const before = await db.exportAllData();

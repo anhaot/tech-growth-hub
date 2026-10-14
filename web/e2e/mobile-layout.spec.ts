@@ -55,6 +55,15 @@ test('手机端背题和答题操作条位于题目下方且上下栏之间都�
     const mobileMain = page.locator('main');
     await expect(swipeRegion).toBeVisible();
     await expect(toolbar).toBeVisible();
+    const controls = page.getByTestId('learning-question-controls');
+    await expect(controls.getByRole('button', { name: '版本历史' })).toBeVisible();
+    await expect(page.getByText(/浏览位置|已查看 .* 次/)).toHaveCount(0);
+    await page.setViewportSize({ width: 320, height: 844 });
+    const number = await controls.getByRole('spinbutton').boundingBox();
+    const history = await controls.getByRole('button', { name: '版本历史' }).boundingBox();
+    expect(number).not.toBeNull(); expect(history).not.toBeNull();
+    expect(Math.abs(number!.y - history!.y)).toBeLessThan(12);
+    await page.setViewportSize({ width: 390, height: 844 });
 
     const positions = await Promise.all([
       questionCard.boundingBox(),

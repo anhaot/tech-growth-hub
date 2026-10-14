@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { questionApi } from '@/api';
-import { getTagColorClasses } from '@/lib/tagColors';
-import { parseQuestionTags } from '@/lib/questionTags';
+import { questionApi, categoryApi } from '@/api';
+
+import { Category } from '@/types';
 import { renderSafeMarkdown } from '@/lib/renderMarkdown';
 import { useAuthStore } from '@/store';
-import { Bookmark, BookOpen, Brain, Trash2, Star, Eye, EyeOff, Tags, X } from 'lucide-react';
+import { Bookmark, BookOpen, Brain, Trash2, Star, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Question {
@@ -16,7 +16,6 @@ interface Question {
   explanation: string | null;
   difficulty: 'easy' | 'medium' | 'hard';
   category_id: string | null;
-  tags: string;
 }
 
 const bookmarksCache = new Map<string, Question[]>();
@@ -32,11 +31,11 @@ export const BookmarksPage: React.FC = () => {
   const requestSequence = useRef(0);
   const initialBookmarks = bookmarksCache.get(initialCacheKey);
   const [questions, setQuestions] = useState<Question[]>(initialBookmarks || []);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryId, setCategoryId] = useState('');
   const [loading, setLoading] = useState(!initialBookmarks);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState(false);
 
@@ -71,6 +70,14 @@ export const BookmarksPage: React.FC = () => {
     fetchBookmarks();
     return () => { requestSequence.current++; };
   }, [mode, cacheScope]);
+
+  useEffect(() => {
+    let active = true;
+    setCategories([]);
+    setCategoryId('');
+    categoryApi.getAll().then(({ data }) => { if (active) setCategories(data); }).catch(() => {});
+    return () => { active = false; };
+  }, [cacheScope]);
 
   const handleRemoveBookmark = async (questionId: string) => {
     if (removing) return;
@@ -111,26 +118,10 @@ export const BookmarksPage: React.FC = () => {
     return configs[difficulty] || configs.medium;
   };
 
-  const addFilterTag = (value: string) => {
-    const nextTag = value.trim();
-    if (!nextTag || selectedTags.includes(nextTag)) {
-      setTagInput('');
-      return;
-    }
-    setSelectedTags((prev) => [...prev, nextTag]);
-    setTagInput('');
-  };
-
-  const removeFilterTag = (value: string) => {
-    setSelectedTags((prev) => prev.filter((tag) => tag !== value));
-  };
-
-  const filteredQuestions = selectedTags.length === 0
-    ? questions
-    : questions.filter((question) => {
-        const tags = parseQuestionTags(question.tags);
-        return selectedTags.every((tag) => tags.includes(tag));
-      });
+  const filteredQuestions = categoryId
+    ? questions.filter((question) => categoryId === 'uncategorized' ? !question.category_id : question.category_id === categoryId)
+    : questions;
+  const bookmarkedCategories = categories.filter((category) => questions.some((question) => question.category_id === category.id));
 
   const removeSelected = async () => {
     if (!selectedIds.size || removing || !confirm(`取消选中的 ${selectedIds.size} 道题的收藏？题目仍保留在题库中。`)) return;
@@ -152,17 +143,6 @@ export const BookmarksPage: React.FC = () => {
     }
   };
 
-  const availableTags = Array.from(
-    questions.reduce((map, question) => {
-      for (const tag of parseQuestionTags(question.tags)) {
-        map.set(tag, (map.get(tag) || 0) + 1);
-      }
-      return map;
-    }, new Map<string, number>())
-  )
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'));
-
   return (
     <div className="page-shell">
       <div className="flex items-center justify-between gap-3">
@@ -172,7 +152,7 @@ export const BookmarksPage: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900 lg:text-2xl">我的收藏</h1>
-            <p className="text-xs text-gray-500 lg:text-sm">共 {questions.length} 道收藏题目<span className="hidden lg:inline">，支持按标签快速回看</span></p>
+            <p className="text-xs text-gray-500 lg:text-sm">共 {questions.length} 道收藏题目<span className="hidden lg:inline">，支持按分类回看</span></p>
           </div>
         </div>
           <Link to={mode === 'study' ? '/study' : '/quiz'}>
@@ -220,71 +200,12 @@ export const BookmarksPage: React.FC = () => {
               答题收藏
             </button>
           </div>
-          {availableTags.length > 0 || selectedTags.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => setShowMobileFilters((value) => !value)}
-              className={`inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border text-xs font-medium lg:hidden ${
-                showMobileFilters || selectedTags.length > 0
-                  ? 'border-amber-200 bg-amber-50 text-amber-700'
-                  : 'border-slate-200 text-slate-600'
-              }`}
-            >
-              <Tags size={16} /> 标签筛选{selectedTags.length > 0 ? `（${selectedTags.length}）` : ''}
-            </button>
-          ) : null}
-          <div className={`${showMobileFilters ? 'relative' : 'hidden'} flex-1 lg:relative lg:block`}>
-          <Tags className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
-          <input
-            type="text"
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
-                e.preventDefault();
-                addFilterTag(tagInput);
-              }
-            }}
-            onBlur={() => {
-              if (tagInput.trim()) addFilterTag(tagInput);
-            }}
-            placeholder="标签筛选"
-            className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-4 py-3 text-gray-700 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-          />
-          </div>
+          <select aria-label="收藏分类" disabled={removing} value={categoryId} onChange={(event) => { setCategoryId(event.target.value); setSelectedIds(new Set()); }} className="select-field w-full lg:w-auto">
+            <option value="">全部分类</option>
+            {bookmarkedCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            {questions.some((question) => !question.category_id) && <option value="uncategorized">未分类</option>}
+          </select>
         </div>
-        {selectedTags.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {selectedTags.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => removeFilterTag(tag)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm ${getTagColorClasses(tag)}`}
-              >
-                {tag}
-                <X size={14} />
-              </button>
-            ))}
-          </div>
-        ) : null}
-        {availableTags.length > 0 ? (
-          <div className={`${showMobileFilters || selectedTags.length > 0 ? 'mobile-scroll-row' : 'hidden'} lg:flex lg:flex-wrap lg:overflow-visible`}>
-            {availableTags.slice(0, 12).map((tag) => (
-              <button
-                key={tag.name}
-                onClick={() => addFilterTag(tag.name)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-colors ${getTagColorClasses(tag.name)} ${
-                  selectedTags.includes(tag.name)
-                    ? 'ring-2 ring-primary-200'
-                    : 'hover:brightness-95'
-                  }`}
-              >
-                <span>{tag.name}</span>
-                <span className="text-xs text-gray-400">{tag.count}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
       </div>
 
       {questions.length > 0 && (
@@ -311,8 +232,8 @@ export const BookmarksPage: React.FC = () => {
           <div className="mb-4 rounded-2xl bg-amber-50 p-4">
             <Star size={32} className="text-amber-400" />
           </div>
-          <p className="mb-1 text-lg font-medium text-gray-700">{questions.length === 0 ? '暂无收藏题目' : '没有符合标签条件的收藏题目'}</p>
-          <p className="mb-4 text-sm text-gray-500">{questions.length === 0 ? '在学习过程中点击收藏按钮添加题目' : '换一个标签试试，或清空当前标签筛选。'}</p>
+          <p className="mb-1 text-lg font-medium text-gray-700">{questions.length === 0 ? '暂无收藏题目' : '当前分类没有收藏题目'}</p>
+          <p className="mb-4 text-sm text-gray-500">{questions.length === 0 ? '在学习过程中点击收藏按钮添加题目' : '请选择其他分类查看收藏。'}</p>
           <Link to={mode === 'study' ? '/study' : '/quiz'}>
             <button className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-600 rounded-xl text-white hover:from-amber-600 hover:to-orange-700 transition-all shadow-lg shadow-orange-500/20">
               {mode === 'study' ? '去背题' : '去答题'}
@@ -324,7 +245,7 @@ export const BookmarksPage: React.FC = () => {
           {filteredQuestions.map((question) => {
             const diffConfig = getDifficultyConfig(question.difficulty);
             const isExpanded = expandedIds.has(question.id);
-            
+
             return (
               <div
                 key={question.id}
@@ -337,6 +258,7 @@ export const BookmarksPage: React.FC = () => {
                       if (next.has(question.id)) next.delete(question.id); else next.add(question.id);
                       return next;
                     })} className="h-5 w-5" />
+                    {question.category_id && <span className="text-xs text-gray-500">{categories.find((category) => category.id === question.category_id)?.name || '未命名分类'}</span>}
                     <span className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-medium border ${diffConfig.bg} ${diffConfig.text} ${diffConfig.border}`}>
                       {diffConfig.label}
                     </span>
@@ -350,13 +272,13 @@ export const BookmarksPage: React.FC = () => {
                     <Trash2 size={16} />
                   </button>
                 </div>
-                
+
                 <div className="p-3.5 pt-2 lg:p-5 lg:pt-3">
                   <div 
                     className="text-gray-900 prose prose-sm max-w-none mb-4"
                     dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(question.content.substring(0, isExpanded ? undefined : 200), 'compact') }}
                   />
-                  
+
                   {!isExpanded && (
                     <button
                       onClick={() => toggleExpand(question.id)}
@@ -366,7 +288,7 @@ export const BookmarksPage: React.FC = () => {
                       查看答案
                     </button>
                   )}
-                  
+
                   {isExpanded && (
                     <>
                       <div className="mt-4 pt-4 border-t border-gray-100">
@@ -379,7 +301,7 @@ export const BookmarksPage: React.FC = () => {
                           dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(question.answer, 'compact') }}
                         />
                       </div>
-                      
+
                       {question.explanation && (
                         <div className="mt-4">
                           <div className="flex items-center gap-2 mb-3">
@@ -392,7 +314,7 @@ export const BookmarksPage: React.FC = () => {
                           />
                         </div>
                       )}
-                      
+
                       <button
                         onClick={() => toggleExpand(question.id)}
                         className="mt-4 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-50 text-xs font-medium text-slate-600 active:bg-slate-100 lg:min-h-0 lg:w-auto lg:bg-transparent lg:text-sm lg:text-gray-500 lg:hover:text-gray-700"

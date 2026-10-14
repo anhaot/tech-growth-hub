@@ -18,7 +18,7 @@ test('题库页可以创建题目并在列表中搜索到', async ({ page, reque
   await page.getByTestId('question-content-input').fill(`E2E 创建题目 ${suffix}\n第二行内容`);
   await page.getByTestId('question-answer-input').fill('这是自动化测试答案');
   await page.getByTestId('question-explanation-input').fill('这是自动化测试解析');
-  await page.getByTestId('question-tags-input').fill('e2e,create');
+  await expect(page.getByTestId('question-tags-input')).toHaveCount(0);
   await page.getByTestId('question-save-button').click();
 
   await expect(page.getByTestId('question-modal')).toBeHidden();

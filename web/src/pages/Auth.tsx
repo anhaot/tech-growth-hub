@@ -113,7 +113,7 @@ const AuthShell: React.FC<{
               <div className="space-y-3 p-6 font-mono text-sm leading-6">
                 <p><span className="text-violet-300">const</span> <span className="text-sky-300">learning</span> <span className="text-white">= {'{'}</span></p>
                 <p className="pl-6"><span className="text-blue-200">capture</span><span className="text-white">: </span><span className="text-emerald-300">'快速记录'</span><span className="text-white">,</span></p>
-                <p className="pl-6"><span className="text-blue-200">organize</span><span className="text-white">: </span><span className="text-emerald-300">'分类与标签'</span><span className="text-white">,</span></p>
+                <p className="pl-6"><span className="text-blue-200">organize</span><span className="text-white">: </span><span className="text-emerald-300">'分类管理'</span><span className="text-white">,</span></p>
                 <p className="pl-6"><span className="text-blue-200">practice</span><span className="text-white">: [</span><span className="text-emerald-300">'背题'</span><span className="text-white">, </span><span className="text-emerald-300">'答题'</span><span className="text-white">]</span></p>
                 <p className="text-white">{'}'}</p>
                 <div className="mt-5 flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-3 text-xs text-slate-300">

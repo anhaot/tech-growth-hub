@@ -8,11 +8,10 @@ const AI_IMPORT_PROMPT_TEMPLATE = `请按 JSON 返回一组适合记忆背题的
 
 要求：
 1. 返回格式必须是 JSON 数组
-2. 每一项包含 title、content、answer、explanation、difficulty、tags
+2. 每一项包含 title、content、answer、explanation、difficulty
 3. difficulty 只能是 easy、medium、hard
 4. answer 要准确、简洁、利于记忆
 5. explanation 用于背题时快速理解
-6. tags 为可选字段，如有标签，每题最多 5 个
 
 示例：
 [
@@ -21,14 +20,13 @@ const AI_IMPORT_PROMPT_TEMPLATE = `请按 JSON 返回一组适合记忆背题的
     "content": "说出 200、301、404、500 的含义。",
     "answer": "200 成功；301 永久重定向；404 资源不存在；500 服务器内部错误。",
     "explanation": "这几个状态码是 Web 开发最常见的排障基础。",
-    "difficulty": "easy",
-    "tags": ["HTTP", "状态码"]
+    "difficulty": "easy"
   },
   {
     "title": "什么是 Docker 镜像",
     "content": "说明 Docker 镜像的含义。",
     "answer": "Docker 镜像是用于创建容器的只读模板。",
-    "explanation": "题目没有标签也可以正常导入。",
+    "explanation": "答案和解析可在导入后补充。",
     "difficulty": "easy"
   }
 ]`;
@@ -69,15 +67,14 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
     else previewSection.current?.scrollIntoView({ block: 'start' });
   }, [preview?.id, preview?.page, result]);
 
-  const csvExample = `内容,答案,难度,解析,标签
-什么是HTTP协议?,HTTP是HyperText Transfer Protocol的缩写，即超文本传输协议。,medium,HTTP协议定义了客户端和服务器之间的通信规则,"HTTP,协议"`;
+  const csvExample = `内容,答案,难度,解析
+什么是HTTP协议?,HTTP是HyperText Transfer Protocol的缩写，即超文本传输协议。,medium,HTTP协议定义了客户端和服务器之间的通信规则`;
 
   const jsonExample = `[
   {
     "content": "什么是Docker?",
     "answer": "Docker是一个开源的应用容器引擎。",
-    "difficulty": "easy",
-    "tags": ["docker", "容器"]
+    "difficulty": "easy"
   },
   {
     "content": "什么是容器编排?",
@@ -88,11 +85,10 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
 
   const markdownExample = `**什么是Kubernetes?**
 答案：Kubernetes是一个开源的容器编排平台。
-标签：kubernetes, 容器
 
 **Docker和K8s的区别是什么？**
 答案：Docker是容器运行时，K8s是容器编排平台。
-标签：docker, kubernetes`;
+难度：中等`;
 
   const downloadExample = () => {
     let content = '';
@@ -316,7 +312,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
                 }} className="mt-1 h-4 w-4 shrink-0" />}
                 <div className="min-w-0 flex-1"><p className="font-medium break-words">第 {row.row} 条{row.question ? ` · ${row.question.title}` : ''}</p>
                   {row.error ? <p className="mt-1 text-red-700 break-words">{row.error}</p> : row.question && <>
-                    <p className="mt-1 text-gray-500 break-words">分类：{row.question.categoryId ? categories.find(category => category.id === row.question!.categoryId)?.name || row.question.categoryId : '无分类'} · 难度：{({ easy: '简单', medium: '中等', hard: '困难' })[row.question.difficulty]} · 标签：{row.question.tags.join('、') || '无'}</p>
+                    <p className="mt-1 text-gray-500 break-words">分类：{row.question.categoryId ? categories.find(category => category.id === row.question!.categoryId)?.name || row.question.categoryId : '无分类'} · 难度：{({ easy: '简单', medium: '中等', hard: '困难' })[row.question.difficulty]}</p>
                     {row.warnings.map(warning => <p key={warning} className="mt-1 text-amber-700">{warning}</p>)}
                     <details className="mt-2"><summary className="cursor-pointer text-primary-700">查看题干、答案与解析</summary>
                       {([['题干', row.question.content], ['答案', row.question.answer], ['解析', row.question.explanation]] as const).map(([label, value]) => <div key={label} className="mt-2"><p className="text-gray-500">{label}</p><pre className="whitespace-pre-wrap break-words font-sans">{value || '（空）'}</pre></div>)}

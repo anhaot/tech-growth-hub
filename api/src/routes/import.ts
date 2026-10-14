@@ -57,7 +57,7 @@ async function importRows(user: User, rows: ImportRow[], excluded = new Set<numb
       if (error) throw new Error(error);
       const now = new Date().toISOString();
       await db.createQuestion({ id: randomUUID(), title: q.title, content: q.content, answer: q.answer, explanation: q.explanation || null,
-        difficulty: q.difficulty, category_id: q.categoryId, user_id: ownerId, tags: JSON.stringify(q.tags), created_at: now, updated_at: now });
+        difficulty: q.difficulty, category_id: q.categoryId, user_id: ownerId, tags: '[]', created_at: now, updated_at: now });
       result.success++;
     } catch (error) { result.failed++; result.errors.push({ row: row.row, error: (error as Error).message }); }
     if ((result.success + result.failed) % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve));

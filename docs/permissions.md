@@ -40,7 +40,6 @@
 - `question_edit_content`
 - `question_edit_meta`
 - `question_delete`
-- `question_batch_edit`
 - `question_export`
 - `import_manage`
 
@@ -48,7 +47,6 @@
 
 - `category_view`
 - `category_manage`
-- `tag_manage`
 - `duplicate_manage`
 
 ### AI 权限
@@ -149,8 +147,6 @@
 - `question_create`
 - `question_edit_content`
 - `question_edit_meta`
-- `question_batch_edit`
-- `tag_manage`
 - `duplicate_manage`
 - `import_manage`
 - `ai_use`
@@ -177,3 +173,5 @@
 查看版本历史需 `question_view`，同时遵守题库归属和当前/历史分类范围；回退必须同时具备 `question_edit_content` 和 `question_edit_meta`。目标分类不存在或越权时拒绝回退。
 
 查重任务需 `duplicate_manage`，任务结果仅可由发起人读取，并重新检查题库与分类范围。删除重复题另需 `question_delete`；合并同时需要两项编辑权限。集成用户非空分类范围排除无分类题，空范围表示共享题库全部分类。
+
+旧账号中的 `question_batch_edit` 仅用于旧版权限兼容，当前设置页不再提供此开关。批量删除由 `question_delete` 控制。
