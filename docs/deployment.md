@@ -129,7 +129,7 @@ tar -czf tech-growth-hub-v261014-1-linux-amd64.tar.gz \
 ```bash
 sudo mkdir -p /opt/tech-growth-hub
 sudo tar -xzf tech-growth-hub-v261014-1-linux-amd64.tar.gz -C /opt/tech-growth-hub
-sudo useradd --system --home-dir /opt/tech-growth-hub --shell /usr/sbin/nologin tech-growth-hub
+sudo useradd --system --user-group --home-dir /opt/tech-growth-hub --shell /usr/sbin/nologin tech-growth-hub
 sudo install -d -o tech-growth-hub -g tech-growth-hub /opt/tech-growth-hub/api/data /opt/tech-growth-hub/api/uploads
 sudo install -d -m 750 -o root -g tech-growth-hub /etc/tech-growth-hub
 sudo cp /opt/tech-growth-hub/api/.env.example /etc/tech-growth-hub/api.env
