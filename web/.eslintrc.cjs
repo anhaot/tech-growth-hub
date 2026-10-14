@@ -27,6 +27,9 @@ module.exports = {
     'plugin:react-hooks/recommended',
   ],
   ignorePatterns: ['dist/', 'node_modules/'],
+  overrides: [
+    { files: ['tests/**/*.ts'], parserOptions: { project: null } },
+  ],
   rules: {
     'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     'react-hooks/exhaustive-deps': 'off',

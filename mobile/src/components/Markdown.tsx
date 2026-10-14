@@ -44,12 +44,10 @@ function HorizontalContent({
 export function Markdown({
   children,
   turnGesture,
-  variant,
   selectable = true,
 }: {
   children: string;
   turnGesture?: PanGesture;
-  variant?: "title";
   selectable?: boolean;
 }) {
   return (
@@ -202,15 +200,7 @@ export function Markdown({
         ),
       }}
       style={{
-        body:
-          variant === "title"
-            ? {
-                color: colors.text,
-                fontSize: 24,
-                lineHeight: 34,
-                fontWeight: "700",
-              }
-            : { color: colors.text, fontSize: 16, lineHeight: 27 },
+        body: { color: colors.text, fontSize: 16, lineHeight: 27 },
         paragraph: { marginTop: 0, marginBottom: spacing.md },
         heading1: {
           fontSize: 22,
@@ -238,7 +228,10 @@ export function Markdown({
           lineHeight: 21,
         },
         link: { color: colors.primary },
-        table: { borderColor: colors.border },
+        table: { borderColor: colors.border, marginBottom: spacing.md },
+        th: { width: 160, flex: 0, flexBasis: "auto", flexShrink: 0, padding: spacing.sm, backgroundColor: colors.input, fontWeight: "600" },
+        td: { width: 160, flex: 0, flexBasis: "auto", flexShrink: 0, padding: spacing.sm },
+        tr: { borderColor: colors.border },
       }}
     >
       {formatStudyMarkdown(children || "暂无内容")}

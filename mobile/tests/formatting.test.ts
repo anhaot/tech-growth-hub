@@ -55,3 +55,20 @@ test("technical answers retain ASCII command quotes and option punctuation", asy
     .filter((token) => token.type === "text").map((token) => token.content).join("");
   assert.equal(rendered, source);
 });
+
+test("formatting preserves nested and unclosed fences, indented code, tables and literal markers", async () => {
+  const { studyMarkdownParser } = await import("../src/study-markdown-parser");
+  const samples = [
+    "````text\n```\n1. code 2. remains\n````",
+    "```c++\n  1. code 2. remains\n",
+    "    1. code 2. remains\n",
+    "| A | B |\n| --- | --- |\n| 1. first 2. second | value |",
+    "\u0000PROTECTED0\u0000 与 `真实代码`",
+    "> 1. first 2. second",
+  ];
+  for (const source of samples) assert.equal(formatStudyMarkdown(source), source);
+  const table = studyMarkdownParser.parse(samples[3], {});
+  assert.ok(table.some(token => token.type === "table_open"));
+  const fence = studyMarkdownParser.parse(samples[0], {}).find(token => token.type === "fence");
+  assert.equal(fence?.content, "```\n1. code 2. remains\n");
+});

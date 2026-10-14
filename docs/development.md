@@ -134,6 +134,9 @@ npm run lint
 npm run preview
 npm run e2e
 npm run e2e:headed
+npm test
+# 两端格式对照；需先安装 mobile/ 依赖
+npm run test:cross-client
 ```
 
 说明：
@@ -426,3 +429,9 @@ API 回归覆盖版本冲突、回退、分类历史权限、旧备份、合并�
 `POST /api/import/preview/csv|json|markdown` 使用 multipart 的 `file` 和可选 `categoryId`；`POST /api/import/preview/text` 使用 `{questions, categoryId}`。响应含预览 ID、到期时间、总数/有效数/错误数及当前 20 条数据。`GET /api/import/preview/:id?page=N` 读取后续页；`POST /api/import/preview/:id/commit` 的 `{excludedRows: number[]}` 按原始条号排除题目，其余有效条目导入。CSV 条号包含表头偏移。
 
 预览属于发起账号，授权变化要求重建，提交重新检查分类。相同 ID 的成功提交结果保留 15 分钟以便重试，不重复写入。预览队列保存在进程内，全局最多 8 个，每账号新预览会替换之前已就绪或完成的预览；多实例需要固定到同一实例。共享解析器同时用于兼容导入接口，避免预览与导入解析规则漂移。
+
+## 两端题目格式
+
+App 阅读页与 Web 都展示完整题干，不额外展示简短标题。两端使用相同 Markdown 选项，禁止原始 HTML 执行，仅允许显式 HTTP(S) 链接；字面实体、命令引号和代码缩进保留。Web 表格在容器内滚动，App 表格固定列宽并横向滚动，正文不撑开屏幕。
+
+`fixtures/study-markdown.json` 覆盖换行、嵌套列表、长/未闭合围栏、转义管道、空表格、链接和技术符号。Web 的 `npm test` 只需 Web 依赖；`npm run test:cross-client` 需安装两端依赖，检查展示预处理和 Markdown 结构一致。App 的 `npm test` 另行验证代码和旧格式保护；Android bundle 和浏览器预览检查分别使用 `npm run export:android`、`npm run export:web`。

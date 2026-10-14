@@ -1,4 +1,3 @@
-import MarkdownIt from "markdown-it";
+import { createStudyMarkdownParser } from "./markdown-format";
 
-// Keep quotes and symbols in command examples faithful to the stored answer.
-export const studyMarkdownParser = new MarkdownIt({ typographer: false });
+export const studyMarkdownParser = createStudyMarkdownParser();

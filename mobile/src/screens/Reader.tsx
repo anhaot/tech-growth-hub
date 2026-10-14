@@ -302,18 +302,12 @@ function Reader({
             )}
             {question && (
               <>
-                <View testID="question-title">
-                  <Markdown selectable={false} turnGesture={pan} variant="title">
-                    {question.title}
+                <Notice message={progressError} retry={() => void record()} />
+                <View testID="question-content">
+                  <Markdown selectable={false} turnGesture={pan}>
+                    {question.content.trim() ? question.content : "暂无题干"}
                   </Markdown>
                 </View>
-                <Notice message={progressError} retry={() => void record()} />
-                {question.content.trim() &&
-                  question.content.trim() !== question.title.trim() && (
-                    <View testID="question-content">
-                      <Markdown selectable={false} turnGesture={pan}>{question.content}</Markdown>
-                    </View>
-                  )}
                 <View
                   style={{
                     borderTopWidth: 1,
@@ -326,7 +320,7 @@ function Reader({
                     style={[styles.row, { justifyContent: "space-between" }]}
                   >
                     <Text style={[styles.heading, { color: colors.primary }]}>
-                      参考答案
+                      答案
                     </Text>
                     <Pressable
                       accessibilityRole="button"
@@ -356,7 +350,7 @@ function Reader({
                   {revealed && (
                     <View testID="question-answer">
                       <Markdown selectable={false} turnGesture={pan}>
-                        {question.answer?.trim() || "这道题暂未填写答案"}
+                        {question.answer?.trim() ? question.answer : "暂无答案"}
                       </Markdown>
                     </View>
                   )}
@@ -371,7 +365,7 @@ function Reader({
                     }}
                   >
                     <Text style={[styles.heading, { color: colors.primary }]}>
-                      思路解析
+                      解析
                     </Text>
                     <View testID="question-explanation">
                       <Markdown selectable={false} turnGesture={pan}>

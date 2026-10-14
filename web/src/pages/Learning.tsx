@@ -358,7 +358,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
     const isInteractiveTarget = (target: EventTarget | null) => (
       target instanceof Element
       && Boolean(target.closest(
-        'button, input, select, textarea, a, pre, [contenteditable="true"], [role="dialog"], [role="slider"]'
+        'button, input, select, textarea, a, pre, .markdown-table, [contenteditable="true"], [role="dialog"], [role="slider"]'
       ))
     );
 
@@ -742,7 +742,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   <div
                     data-testid="learning-question-content"
                     className="prose prose-sm max-w-none flex-1 text-[15px] leading-7 text-gray-900 lg:text-lg lg:leading-relaxed"
-                    dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(currentQuestion?.content || '', 'rich') }}
+                    dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(currentQuestion?.content.trim() ? currentQuestion.content : '暂无题干', 'rich') }}
                   />
                   <div className="hidden flex-shrink-0 flex-wrap items-center gap-2 lg:flex">
                     {currentQuestion && (
@@ -807,10 +807,10 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                         <div
                           data-testid="learning-question-answer"
                           className="prose prose-sm max-w-none rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-gray-700 lg:p-4"
-                          dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(currentQuestion?.answer || '', 'rich') }}
+                          dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(currentQuestion?.answer.trim() ? currentQuestion.answer : '暂无答案', 'rich') }}
                         />
                       </div>
-                      {currentQuestion?.explanation && (
+                      {currentQuestion?.explanation?.trim() && (
                         <div>
                           <div className="mb-2 flex items-center gap-2">
                             <div className="h-4 w-1 rounded-full bg-sky-500" />

@@ -1,0 +1,97 @@
+[
+  {
+    "name": "paragraphs",
+    "source": "第一行\n第二行\n\n下一段",
+    "types": [
+      "paragraph_open",
+      "softbreak"
+    ]
+  },
+  {
+    "name": "nested-lists",
+    "source": "3. 第三项\n   - 内层 **加粗**\n   - 内层 `--option`\n4. 第四项",
+    "types": [
+      "ordered_list_open",
+      "bullet_list_open",
+      "strong_open",
+      "code_inline"
+    ]
+  },
+  {
+    "name": "fences",
+    "source": "````c++\n  std::cout << \"**literal**\";\n```\n1. code 2. remains\n````\n\n~~~bash\nprintf 'a  b\\n'\n~~~",
+    "types": [
+      "fence"
+    ]
+  },
+  {
+    "name": "unclosed-fence",
+    "source": "```text\n  leading spaces\n\n1. code 2. remains\n",
+    "types": [
+      "fence"
+    ]
+  },
+  {
+    "name": "table",
+    "source": "| 命令 | 说明 |\n| :--- | ---: |\n| `a\\|b` | 第一项 |\n| `--option` | **加粗** |",
+    "types": [
+      "table_open",
+      "code_inline",
+      "strong_open"
+    ]
+  },
+  {
+    "name": "empty-table",
+    "source": "| 表头 | 第二列 |\n| --- | --- |",
+    "types": [
+      "table_open"
+    ]
+  },
+  {
+    "name": "quote",
+    "source": "> 引用第一行\n> 引用第二行\n\n---",
+    "types": [
+      "blockquote_open",
+      "softbreak",
+      "hr"
+    ]
+  },
+  {
+    "name": "links",
+    "source": "[文档](https://example.com/path?q=a&n=2) [危险](javascript:alert(1)) <img src=x onerror=alert(1)> &lt;script&gt;",
+    "types": [
+      "link_open"
+    ]
+  },
+  {
+    "name": "inline-literal",
+    "source": "`**literal** <tag> a  b` 和 **加粗**、_斜体_、~~删除~~，选项 \"arg\"、'raw' 和 --option...。",
+    "types": [
+      "code_inline",
+      "strong_open",
+      "em_open",
+      "s_open"
+    ]
+  },
+  {
+    "name": "packed-list",
+    "source": "主要步骤：1. 检查进程；2. 检查磁盘；3. 检查网络。",
+    "types": [
+      "ordered_list_open"
+    ]
+  },
+  {
+    "name": "indented-code",
+    "source": "    1. code 2. remains\n    echo \"raw\"\n",
+    "types": [
+      "code_block"
+    ]
+  },
+  {
+    "name": "literal-placeholder",
+    "source": "\u0000PROTECTED0\u0000 与 `真实代码`",
+    "types": [
+      "code_inline"
+    ]
+  }
+]

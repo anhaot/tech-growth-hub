@@ -2,6 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .prose {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .prose :where(p) { margin: 0.5em 0; }
+  .prose :where(h1, h2, h3, h4, h5, h6) {
+    margin: 1em 0 0.5em;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .prose :where(h1) { font-size: 1.4em; }
+  .prose :where(h2) { font-size: 1.2em; }
+  .prose :where(h3) { font-size: 1.1em; }
+  .prose :where(ul, ol) { margin: 0.5em 0; padding-left: 1.6em; }
+  .prose :where(ul) { list-style: disc; }
+  .prose :where(ol) { list-style: decimal; }
+  .prose :where(li) { margin: 0.25em 0; padding-left: 0.15em; }
+  .prose :where(blockquote) {
+    margin: 0.75em 0;
+    border-left: 3px solid #cbd5e1;
+    padding-left: 0.8em;
+  }
+  .prose :where(a) { color: #2563eb; text-decoration: underline; }
+  .prose :where(code) {
+    border-radius: 4px;
+    background: #fce7f3;
+    padding: 0.1em 0.3em;
+    color: #be185d;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+    white-space: pre-wrap;
+  }
+  .prose :where(pre) {
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 0.75em 0;
+    border-radius: 10px;
+    background: #1e293b;
+    padding: 1em;
+    color: #f1f5f9;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-wrap: normal;
+  }
+  .prose :where(pre code) {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+    white-space: inherit;
+  }
+  .prose :where(.markdown-table) {
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 0.75em 0;
+    overscroll-behavior-x: contain;
+  }
+  .prose :where(table) { width: 100%; min-width: 28rem; border-collapse: collapse; font-size: 0.875em; }
+  .prose :where(th, td) { border: 1px solid #e2e8f0; padding: 0.65em 0.8em; vertical-align: top; }
+  .prose :where(th) { background: #f1f5f9; font-weight: 600; }
+  .prose :where(hr) { margin: 0.75em 0; border-color: #e2e8f0; }
+  .prose :where(img) { max-width: 100%; height: auto; }
+  .prose :where(:first-child) { margin-top: 0; }
+  .prose :where(:last-child) { margin-bottom: 0; }
+}
+
 :root {
   font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   line-height: 1.5;
