@@ -45,11 +45,16 @@ export function Markdown({
   children,
   turnGesture,
   selectable = true,
+  variant = "body",
 }: {
   children: string;
   turnGesture?: PanGesture;
   selectable?: boolean;
+  variant?: "body" | "question";
 }) {
+  const question = variant === "question";
+  const fontSize = question ? 18 : 16;
+  const lineHeight = question ? 30 : 27;
   return (
     <MarkdownDisplay
       markdownit={studyMarkdownParser}
@@ -62,8 +67,8 @@ export function Markdown({
         textgroup: (node, children, parents, markdownStyles) => {
           const inherited: TextStyle = {
             color: colors.text,
-            fontSize: 16,
-            lineHeight: 27,
+            fontSize,
+            lineHeight,
           };
           for (const parent of [...parents].reverse()) {
             const parentStyle =
@@ -140,8 +145,8 @@ export function Markdown({
                 style={{
                   width: Math.max(32, marker.length * 9 + 8),
                   flexShrink: 0,
-                  fontSize: 16,
-                  lineHeight: 27,
+                  fontSize,
+                  lineHeight,
                   color: colors.primary,
                 }}
               >
@@ -200,23 +205,23 @@ export function Markdown({
         ),
       }}
       style={{
-        body: { color: colors.text, fontSize: 16, lineHeight: 27 },
+        body: { color: colors.text, fontSize, lineHeight },
         paragraph: { marginTop: 0, marginBottom: spacing.md },
         heading1: {
-          fontSize: 22,
-          lineHeight: 32,
+          fontSize: question ? 24 : 22,
+          lineHeight: question ? 36 : 32,
           fontWeight: "700",
           marginBottom: spacing.md,
         },
         heading2: {
-          fontSize: 18,
-          lineHeight: 28,
+          fontSize: question ? 20 : 18,
+          lineHeight: question ? 32 : 28,
           fontWeight: "700",
           marginBottom: spacing.sm,
         },
         heading3: {
-          fontSize: 16,
-          lineHeight: 26,
+          fontSize,
+          lineHeight: question ? 30 : 26,
           fontWeight: "600",
           marginBottom: spacing.sm,
         },

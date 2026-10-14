@@ -40,6 +40,31 @@ type ReaderProps = {
   resume?: boolean;
   sequence?: boolean;
 };
+function DisclosureToggle({ label, expanded, onPress }: {
+  label: "答案" | "解析";
+  expanded: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${expanded ? "收起" : "展开"}${label}`}
+      accessibilityState={{ expanded }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        minHeight: 44,
+        paddingLeft: spacing.lg,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.xs,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <Text style={styles.muted}>{expanded ? "收起" : "展开"}</Text>
+      <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.muted} />
+    </Pressable>
+  );
+}
 function Reader({
   id,
   categoryId: requestedCategory,
@@ -65,7 +90,8 @@ function Reader({
   const [error, setError] = useState("");
   const [progressError, setProgressError] = useState("");
   const [info, setInfo] = useState("");
-  const [revealed, setRevealed] = useState(true);
+  const [answerRevealed, setAnswerRevealed] = useState(true);
+  const [explanationRevealed, setExplanationRevealed] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
   const [saving, setSaving] = useState(false);
   const [progressReady, setProgressReady] = useState(false);
@@ -118,6 +144,10 @@ function Reader({
   }, [repository, id, categoryId, resume, refresh]);
 
   const questionId = question?.id;
+  useLayoutEffect(() => {
+    setAnswerRevealed(true);
+    setExplanationRevealed(false);
+  }, [questionId]);
   const record = useCallback(async () => {
     if (!questionId) return;
     setProgressReady(false);
@@ -135,7 +165,6 @@ function Reader({
   }, [repository, questionId]);
   useEffect(() => {
     currentId.current = questionId;
-    setRevealed(true);
     setBookmarked(false);
     setInfo("");
     setProgressError("");
@@ -209,7 +238,8 @@ function Reader({
       if (currentId.current !== sourceId) return;
       if (next && next.id !== sourceId) {
         // Commit the next question and its initial state together; keep the reader mounted.
-        setRevealed(true);
+        setAnswerRevealed(true);
+        setExplanationRevealed(false);
         setProgressReady(false);
         setBookmarked(false);
         setQuestion(next);
@@ -304,7 +334,7 @@ function Reader({
               <>
                 <Notice message={progressError} retry={() => void record()} />
                 <View testID="question-content">
-                  <Markdown selectable={false} turnGesture={pan}>
+                  <Markdown variant="question" selectable={false} turnGesture={pan}>
                     {question.content.trim() ? question.content : "暂无题干"}
                   </Markdown>
                 </View>
@@ -322,32 +352,9 @@ function Reader({
                     <Text style={[styles.heading, { color: colors.primary }]}>
                       答案
                     </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        revealed ? "收起答案和解析" : "展开答案和解析"
-                      }
-                      onPress={() => setRevealed((value) => !value)}
-                      style={({ pressed }) => ({
-                        minHeight: 44,
-                        paddingLeft: spacing.lg,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: spacing.xs,
-                        opacity: pressed ? 0.6 : 1,
-                      })}
-                    >
-                      <Text style={styles.muted}>
-                        {revealed ? "收起" : "展开"}
-                      </Text>
-                      <Ionicons
-                        name={revealed ? "chevron-up" : "chevron-down"}
-                        size={16}
-                        color={colors.muted}
-                      />
-                    </Pressable>
+                    <DisclosureToggle label="答案" expanded={answerRevealed} onPress={() => setAnswerRevealed((value) => !value)} />
                   </View>
-                  {revealed && (
+                  {answerRevealed && (
                     <View testID="question-answer">
                       <Markdown selectable={false} turnGesture={pan}>
                         {question.answer?.trim() ? question.answer : "暂无答案"}
@@ -355,7 +362,7 @@ function Reader({
                     </View>
                   )}
                 </View>
-                {revealed && question.explanation?.trim() && (
+                {question.explanation?.trim() && (
                   <View
                     style={{
                       borderTopWidth: 1,
@@ -364,14 +371,15 @@ function Reader({
                       gap: spacing.sm,
                     }}
                   >
-                    <Text style={[styles.heading, { color: colors.primary }]}>
-                      解析
-                    </Text>
-                    <View testID="question-explanation">
+                    <View style={[styles.row, { justifyContent: "space-between" }]}>
+                      <Text style={[styles.heading, { color: colors.primary }]}>解析</Text>
+                      <DisclosureToggle label="解析" expanded={explanationRevealed} onPress={() => setExplanationRevealed((value) => !value)} />
+                    </View>
+                    {explanationRevealed && <View testID="question-explanation">
                       <Markdown selectable={false} turnGesture={pan}>
                         {question.explanation}
                       </Markdown>
-                    </View>
+                    </View>}
                   </View>
                 )}
                 {info && (
