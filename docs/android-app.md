@@ -79,6 +79,50 @@ npm run android
 
 ## 构建
 
+### 全新机器准备
+
+公开仓库包含 App 的完整 TypeScript 源码、图标、Expo 配置、构建脚本和 `package-lock.json`。`android/` 是 Expo 根据这些文件生成的工程，不需要从原开发主机复制。构建工具与第三方依赖仍需联网下载；本地构建不要求 Expo 账号或连接已有题库服务器。
+
+以下以 Linux 为例。准备 Git、Node.js 22.13.0 或更新的 22.x、npm 10+、JDK 21，以及 Android SDK。建议为安卓原生构建预留至少 8GB 内存和 15GB 可用磁盘；这是容量建议，实际占用取决于缓存与架构。小内存主机使用后文串行脚本，并避免同时运行多套构建。
+
+1. 从 [Android Studio 官方页面](https://developer.android.com/studio)安装 Android Studio 或 Command-Line Tools，将 SDK 放在例如 `$HOME/Android/Sdk`。通过 SDK Manager 安装下面列出的组件；命令行工具的 `sdkmanager` 应位于 `$ANDROID_HOME/cmdline-tools/latest/bin/`。这里的 `latest` 是 Android SDK 工具的目录名。
+2. 设置环境，`JAVA_HOME` 替换为自己安装的 JDK 21 路径。不要把 JDK 路径指向 `bin/java` 文件。
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+node --version
+npm --version
+java -version
+```
+
+3. 当前锁定的 React Native / Expo 工程使用 Android API 36、Build Tools 36.0.0、NDK 27.1.12297006 和 CMake 3.22.1。使用已安装的 Command-Line Tools 时执行：
+
+```bash
+sdkmanager --sdk_root="$ANDROID_HOME" \
+  "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
+  "ndk;27.1.12297006" "cmake;3.22.1"
+sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+```
+
+逐项阅读并接受所需许可。也可以在 Android Studio 的 SDK Manager 中选择相同组件。Google 的新 Android CLI 提供替代的 SDK 管理入口；上述命令适用于仍提供 `sdkmanager` 的 Command-Line Tools，工具安装布局与参数见 [SDK 官方说明](https://developer.android.com/tools/sdkmanager)。升级 Expo/React Native 后应重新核对工具版本。
+
+4. 下载源码并安装锁定依赖：
+
+```bash
+git clone https://github.com/anhaot/tech-growth-hub.git
+cd tech-growth-hub/mobile
+npm ci
+```
+
+首次原生构建还需下载 Gradle、Android Gradle Plugin、Maven 依赖和原生库，网络应能访问 npm、Google Maven、Maven Central、Gradle 分发站点及相关依赖仓库。Gradle 使用工程自带的 `gradlew`，不要求系统另装 Gradle。
+
+`EXPO_PUBLIC_API_URL` 只是可选的登录页默认地址；不设置也可以在安装后手动填写。服务端真实 `.env`、数据库、AI Key 和签名私钥不属于构建源码，不能放进 App 公共环境变量。
+
+### 生成工程与本地 APK
+
 本地构建需要 Android SDK、Java 21，并设置 `ANDROID_HOME` 和 `JAVA_HOME`：
 
 ```bash
@@ -93,6 +137,25 @@ APK 位于 `mobile/android/app/build/outputs/apk/release/app-release.apk`。生�
 
 已有原生目录时，可从 `mobile/` 使用 `bash scripts/build-android-local.sh package` 进行 ARM64 构建。此脚本限制 Gradle 和 Metro 并发；运行前应配置自己的 SDK 与 Java 环境，完整打包的 Java 堆默认使用 768 MiB，可用 `TGH_GRADLE_HEAP` 调整。单独生成 bundle 或配置 CMake 时固定使用 512 MiB；C++ 并发由原生构建工具决定；已有各模块 CMake 配置时，可使用 `native` 和 `native-deps` 阶段串行编译。内存受限时串行运行测试、导出和原生构建。
 
+安装 Android platform-tools 并连接已开启 USB 调试的设备后，可安装 APK：
+
+```bash
+adb devices
+adb install -r android/app/build/outputs/apk/release/app-release.apk
+```
+
+以上安装命令从 `mobile/` 运行。出现签名冲突时，先确认正在使用原签名；不要直接卸载以绕过错误，卸载会丢失本机未同步数据。`arm64-v8a` 产物用于 ARM64 安卓设备，不能拿它验证只支持 x86 的模拟器。
+
+### 自己签名与后续升级
+
+默认生成的本地 release 使用预览调试签名，可以安装测试。需要稳定分发时，用 Android Studio 打开生成的 `mobile/android` 工程，依次选择 **Build → Generate Signed Bundle / APK → APK**，创建或选择自己的 keystore、别名，选择 release 构建并保存产物。具体向导见 [Android 官方签名说明](https://developer.android.com/studio/publish/app-signing)。签名文件和密码存放在仓库外，单独备份。
+
+重新生成的预览签名不保证与此前交付 APK 相同，自己的新签名也不能直接覆盖原签名的已安装版本。后续覆盖升级必须继续使用同一包名和相容签名，并在 `app.config.ts` 中递增 `android.versionCode`，同步维护 `version` 与 `package.json` 的版本；然后重新生成原生工程。仅改变界面版本字符串不能解决版本代码或签名不匹配。
+
+长期自动构建时，应通过本地签名配置和 Expo 配置插件或自己的 EAS 凭据管理签名；只手改生成的 Gradle 文件会在后续重新生成时丢失。公开仓库不提供私人签名密钥。
+
+### EAS 云构建
+
 也可使用 EAS Build。`eas.json` 提供内部 APK 配置和正式 AAB 配置：
 
 ```bash
@@ -102,6 +165,8 @@ npx eas-cli build --platform android --profile production
 ```
 
 首次使用需登录 Expo、关联项目并按 CLI 提示配置 `extra.eas.projectId` 和签名。正式发布前确定包名、版本与签名策略。
+
+本项目 EAS 使用远端版本代码，首次关联时须核对 EAS 的 Android 版本代码，不能只依赖本地 `versionCode: 12`；production 配置会自动递增远端版本代码。内部 APK 与正式 AAB 的下载地址由各自构建任务提供，AAB 不能作为普通 APK 直接安装。
 
 ## 验证
 
