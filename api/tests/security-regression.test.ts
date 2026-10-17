@@ -1190,6 +1190,83 @@ test('CSV and Markdown previews preserve metadata and code, and malformed inputs
   assert.equal((await db.getQuestions(user.user.id)).total, 0);
 });
 
+test('portable JSON creates selected categories only on commit, reuses names and preserves library ownership', async () => {
+  const owner = await createUser('bundle-owner', 'bundle-owner@example.com', 'Password123');
+  const other = await createUser('bundle-other', 'bundle-other@example.com', 'Password123');
+  const bundle = { formatVersion: 2, categories: [{ id: 'a', name: '自动分类甲' }, { id: 'b', name: '自动分类乙' }],
+    questions: [{ content: '甲题', answer: '甲答案', categoryId: 'a' }, { content: '乙题', answer: '乙答案', categoryId: 'b' }] };
+  const auth = { Authorization: `Bearer ${owner.token}` };
+  const preview = await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(preview.body.valid, 2);
+  assert.deepEqual(preview.body.categoriesToCreate, ['自动分类甲', '自动分类乙']);
+  assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 0);
+  const committed = await app.post(`/api/import/preview/${preview.body.id}/commit`).set(auth).send({ excludedRows: [2] });
+  assert.equal(committed.body.success, 1); assert.equal(committed.body.categoriesCreated, 1);
+  const categories = await db.getCategoriesByUserId(owner.user.id);
+  assert.deepEqual(categories.map(category => category.name), ['自动分类甲']);
+  const questions = (await db.getQuestions(owner.user.id)).questions;
+  assert.equal(questions[0].category_id, categories[0].id);
+  const direct = await app.post('/api/import/json').set(auth).attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(direct.body.success, 2); assert.equal(direct.body.categoriesCreated, 1);
+  assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 2);
+  const separate = await app.post('/api/import/json').set('Authorization', `Bearer ${other.token}`)
+    .attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(separate.body.categoriesCreated, 2);
+  assert.ok((await db.getCategoriesByUserId(other.user.id)).every(category => !categories.some(item => item.id === category.id)));
+  const override = await app.post('/api/import/preview/json').set(auth).field('categoryId', categories[0].id)
+    .attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(override.body.valid, 2); assert.deepEqual(override.body.categoriesToCreate, []);
+  assert.ok(override.body.rows.every((row: {question: {categoryId: string; categoryName?: string}}) => row.question.categoryId === categories[0].id && !row.question.categoryName));
+});
+
+test('portable category import enforces management and category scope permissions without side effects', async () => {
+  const owner = await createUser('bundle-permissions', 'bundle-permissions@example.com', 'Password123');
+  const member = await createUser('bundle-member', 'bundle-member@example.com', 'Password123');
+  const auth = { Authorization: `Bearer ${owner.token}` };
+  const bundle = { formatVersion: 2, categories: [{ id: 'a', name: '分类权限测试' }], questions: [{ content: 'Test', answer: 'Answer', categoryId: 'a' }] };
+  const user = (await db.getUserById(owner.user.id))!;
+  await db.updateUser(owner.user.id, { permissions: { ...user.permissions, category_manage: false } });
+  const denied = await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(denied.body.valid, 0); assert.match(denied.body.rows[0].error, /分类管理权限/);
+  assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 0);
+  await db.updateUser(owner.user.id, { permissions: user.permissions });
+  const category = await app.post('/api/categories').set(auth).send({ name: '分类权限测试' });
+  await db.updateUser(owner.user.id, { permissions: { ...user.permissions, category_manage: false } });
+  const reuse = await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(reuse.body.valid, 1); assert.deepEqual(reuse.body.categoriesToCreate, []);
+  await db.updateUser(member.user.id, { user_type: 'integrated', library_owner_id: owner.user.id,
+    category_scopes: [randomUUID()], permissions: user.permissions });
+  const scopeDenied = await app.post('/api/import/preview/json').set('Authorization', `Bearer ${member.token}`)
+    .attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(scopeDenied.body.valid, 0); assert.match(scopeDenied.body.rows[0].error, /分类的导入权限/);
+  await db.deleteCategory(category.body.id);
+  const missing = await app.post('/api/import/preview/json').set('Authorization', `Bearer ${member.token}`)
+    .attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(missing.body.valid, 0);
+  assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 0);
+});
+
+test('malformed portable files, ambiguous names and failed question writes do not create categories', async () => {
+  const owner = await createUser('bundle-invalid', 'bundle-invalid@example.com', 'Password123');
+  const auth = { Authorization: `Bearer ${owner.token}` };
+  const category = { id: 'a', name: '分类重名' };
+  const bundle = { formatVersion: 2, categories: [category], questions: [{ content: 'Test', answer: 'Answer', categoryId: 'a' }] };
+  for (const invalid of [{ ...bundle, categories: [category, category] }, { ...bundle, questions: [{ content: 'Test', answer: 'Answer', categoryId: 'missing' }] }, { ...bundle, formatVersion: 3 }]) {
+    assert.equal((await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(invalid)), 'bank.json')).status, 400);
+  }
+  assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 0);
+  const question = await createQuestion(owner.user.id, 'Rollback named category');
+  await assert.rejects(db.createQuestionInNamedCategory(question, '失败不留空分类', true));
+  assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 0);
+  const results = await Promise.all(Array.from({ length: 3 }, (_, index) => db.createQuestionInNamedCategory({ ...question, id: randomUUID(), title: `Concurrent ${index}` }, '并发分类', true)));
+  assert.equal(results.filter(result => result.created).length, 1);
+  assert.equal(new Set(results.map(result => result.categoryId)).size, 1);
+  await app.post('/api/categories').set(auth).send({ name: category.name });
+  await app.post('/api/categories').set(auth).send({ name: category.name });
+  const ambiguous = await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(bundle)), 'bank.json');
+  assert.equal(ambiguous.body.valid, 0); assert.match(ambiguous.body.rows[0].error, /多个同名/);
+});
+
 test('delegated user management cannot take over administrators or grant higher permissions, and responses hide password hashes', async () => {
   const admin = await app.post('/api/auth/login').set('X-Forwarded-For', nextTestIp()).send({ username: 'admin', password: 'AdminPass123' });
   assert.equal(admin.status, 200);

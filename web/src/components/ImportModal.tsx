@@ -70,18 +70,16 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
   const csvExample = `内容,答案,难度,解析
 什么是HTTP协议?,HTTP是HyperText Transfer Protocol的缩写，即超文本传输协议。,medium,HTTP协议定义了客户端和服务器之间的通信规则`;
 
-  const jsonExample = `[
-  {
-    "content": "什么是Docker?",
-    "answer": "Docker是一个开源的应用容器引擎。",
-    "difficulty": "easy"
-  },
-  {
-    "content": "什么是容器编排?",
-    "answer": "容器编排是对多个容器进行自动化部署、调度和管理。",
-    "difficulty": "medium"
-  }
-]`;
+  const jsonExample = `{
+  "formatVersion": 2,
+  "categories": [{ "id": "containers", "name": "容器技术" }],
+  "questions": [{
+    "content": "什么是容器？",
+    "answer": "容器使用操作系统隔离机制运行应用进程。",
+    "difficulty": "easy",
+    "categoryId": "containers"
+  }]
+}`;
 
   const markdownExample = `**什么是Kubernetes?**
 答案：Kubernetes是一个开源的容器编排平台。
@@ -127,9 +125,13 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
       let response;
       if (importType === 'ai') {
         const parsed: unknown = JSON.parse(aiText.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
-        const questions = Array.isArray(parsed) ? parsed : (parsed as { questions?: unknown[] } | null)?.questions;
-        if (!Array.isArray(questions)) throw new Error('AI 内容必须是 JSON 数组或包含 questions 数组');
-        response = await importApi.previewText(questions, categoryId || undefined);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && (parsed as { formatVersion?: unknown }).formatVersion === 2) {
+          response = await importApi.previewFile('json', new File([JSON.stringify(parsed)], '题库.json', { type: 'application/json' }), categoryId || undefined);
+        } else {
+          const questions = Array.isArray(parsed) ? parsed : (parsed as { questions?: unknown[] } | null)?.questions;
+          if (!Array.isArray(questions)) throw new Error('AI 内容必须是 JSON 数组或包含 questions 数组');
+          response = await importApi.previewText(questions, categoryId || undefined);
+        }
       } else {
         if (!file) throw new Error('请选择文件');
         if (file.size > 10 * 1024 * 1024) throw new Error('文件不能超过 10 MB');
@@ -227,11 +229,12 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
               onChange={(e) => { setCategoryId(e.target.value); resetPreview(); }}
               className="select-field w-full px-4 pr-10 py-3 text-gray-700 bg-gray-50 focus:bg-white cursor-pointer"
             >
-              <option value="">保留文件分类 / 无分类</option>
+              <option value="">按文件分类自动导入</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+            <p className="mt-2 text-sm text-gray-500">带分类 JSON 会自动创建缺失分类并归类题目，无需逐个导入。选择已有分类会把所有题目统一导入该分类。</p>
           </div>
 
           {importType === 'ai' ? (
@@ -303,6 +306,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
               <p className="font-medium">共 {preview.total} 道，可导入 {preview.valid} 道，错误 {preview.invalid} 道</p>
               <p className="mt-1">将导入 {preview.valid - excluded.size} 道；已排除 {excluded.size} 道。错误题目不会导入。</p>
+              {!!preview.categoriesToCreate?.length && <p className="mt-1 text-blue-800">确认后自动创建 {preview.categoriesToCreate.length} 个分类：{preview.categoriesToCreate.join('、')}。仅创建实际导入题目使用的分类。</p>}
               <p className="mt-1 text-gray-600">预览保留 15 分钟。核对题干、答案和分类后再确认；更换文件或分类需重新解析。</p>
             </div>
             {preview.rows.map(row => <article key={row.row} className={`rounded-lg border p-3 text-sm ${row.error ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
@@ -312,7 +316,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
                 }} className="mt-1 h-4 w-4 shrink-0" />}
                 <div className="min-w-0 flex-1"><p className="font-medium break-words">第 {row.row} 条{row.question ? ` · ${row.question.title}` : ''}</p>
                   {row.error ? <p className="mt-1 text-red-700 break-words">{row.error}</p> : row.question && <>
-                    <p className="mt-1 text-gray-500 break-words">分类：{row.question.categoryId ? categories.find(category => category.id === row.question!.categoryId)?.name || row.question.categoryId : '无分类'} · 难度：{({ easy: '简单', medium: '中等', hard: '困难' })[row.question.difficulty]}</p>
+                    <p className="mt-1 text-gray-500 break-words">分类：{row.question.categoryName || (row.question.categoryId ? categories.find(category => category.id === row.question!.categoryId)?.name || row.question.categoryId : '无分类')}{row.question.categoryName && !row.question.categoryId ? '（确认时创建）' : ''} · 难度：{({ easy: '简单', medium: '中等', hard: '困难' })[row.question.difficulty]}</p>
                     {row.warnings.map(warning => <p key={warning} className="mt-1 text-amber-700">{warning}</p>)}
                     <details className="mt-2"><summary className="cursor-pointer text-primary-700">查看题干、答案与解析</summary>
                       {([['题干', row.question.content], ['答案', row.question.answer], ['解析', row.question.explanation]] as const).map(([label, value]) => <div key={label} className="mt-2"><p className="text-gray-500">{label}</p><pre className="whitespace-pre-wrap break-words font-sans">{value || '（空）'}</pre></div>)}
@@ -327,6 +331,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
           {result && (
             <div ref={resultSection} className="p-4 bg-green-50 rounded-lg border border-green-200">
               <p className="text-green-700 font-medium">成功导入：{result.success} 道</p>
+              {!!result.categoriesCreated && <p className="mt-1 text-sm text-green-700">已自动创建 {result.categoriesCreated} 个分类</p>}
               {!!result.skipped && <p className="text-sm mt-1">主动排除：{result.skipped} 道</p>}
               {result.failed > 0 && <><p className="text-red-600 text-sm mt-1">未导入：{result.failed} 道</p><button onClick={downloadErrors} className="mt-2 text-sm text-primary-700">下载错误明细</button><ul className="mt-2 space-y-1 text-sm text-red-700">{result.errors.slice(0, 20).map(item => <li key={item.row} className="break-words">第 {item.row} 条：{item.error}</li>)}</ul></>}
               <p className="mt-2 text-sm text-gray-500">关闭后题库列表会刷新。</p>

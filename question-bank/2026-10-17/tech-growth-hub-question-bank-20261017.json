@@ -1,0 +1,1495 @@
+{
+  "formatVersion": 2,
+  "categories": [
+    {
+      "id": "bank-category-01",
+      "name": "服务网格与Envoy"
+    },
+    {
+      "id": "bank-category-02",
+      "name": "MLOps与Kubeflow"
+    },
+    {
+      "id": "bank-category-03",
+      "name": "Kubernetes网络与CNI"
+    },
+    {
+      "id": "bank-category-04",
+      "name": "Kubernetes基础与工作负载"
+    },
+    {
+      "id": "bank-category-05",
+      "name": "Docker与容器"
+    },
+    {
+      "id": "bank-category-06",
+      "name": "操作系统与主机运维"
+    },
+    {
+      "id": "bank-category-07",
+      "name": "网络与安全"
+    },
+    {
+      "id": "bank-category-08",
+      "name": "数据库与MySQL"
+    },
+    {
+      "id": "bank-category-09",
+      "name": "中间件与分布式系统"
+    },
+    {
+      "id": "bank-category-10",
+      "name": "日志与Elasticsearch"
+    },
+    {
+      "id": "bank-category-11",
+      "name": "监控与可观测性"
+    },
+    {
+      "id": "bank-category-12",
+      "name": "DevOps与自动化"
+    },
+    {
+      "id": "bank-category-13",
+      "name": "云计算与虚拟化"
+    },
+    {
+      "id": "bank-category-14",
+      "name": "Python基础"
+    },
+    {
+      "id": "bank-category-15",
+      "name": "面试表达与职业发展"
+    },
+    {
+      "id": "bank-category-16",
+      "name": "Web服务与负载均衡"
+    }
+  ],
+  "questions": [
+    {
+      "title": "Envoy 核心对象与请求处理链路",
+      "content": "Envoy 中 Listener、Filter、Route、Cluster 和 Endpoint 分别有什么作用？一个 HTTP 请求如何经过这些对象？",
+      "answer": "Envoy 的关键对象不应只背成固定的“三个组件”。\n\n- Listener 监听地址和端口，根据匹配条件选择网络过滤器链。\n- Network Filter 处理连接层数据；HTTP Connection Manager（HCM）是将 HTTP 连接交给 HTTP 处理链的网络过滤器。\n- HTTP Filter 可以执行认证、限流、路由等处理；router filter 按路由结果向上游转发。\n- Route 配置通过域名、路径、请求头等条件选择上游 Cluster，也可设置重试和超时。\n- Cluster 描述逻辑上游服务、负载均衡和连接配置；Endpoint 是该服务的具体地址。\n\n典型流程是：客户端连接 → Listener/网络过滤器链 → HCM/HTTP 过滤器 → 路由匹配 → Cluster 选择健康 Endpoint → 上游响应。配置可来自静态文件或 xDS。",
+      "explanation": "",
+      "categoryId": "bank-category-01",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Envoy xDS 动态配置",
+      "content": "Envoy 通过 xDS 协议动态配置，其中 LDS、RDS、CDS、EDS 分别代表什么？",
+      "answer": "xDS 是 Envoy 的动态发现 API 集合：\n\n- LDS（Listener Discovery Service）：Listener。\n- RDS（Route Discovery Service）：HTTP 路由。\n- CDS（Cluster Discovery Service）：上游 Cluster。\n- EDS（Endpoint Discovery Service）：具体上游端点。\n\n支持的传输包括 REST/gRPC；gRPC 有 State-of-the-World 与 Delta 形式，ADS 可在流中聚合资源。控制平面需要处理版本、ACK/NACK、资源依赖和验证；不能一概承诺所有字段都无条件热更新。",
+      "explanation": "",
+      "categoryId": "bank-category-01",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Istio 控制平面与数据平面",
+      "content": "请详细列出 Istio 架构中的核心组件（控制平面和数据平面），并分别说明每个组件的主要职责和作用。",
+      "answer": "现代 Istio 通常分控制平面与数据平面。istiod 提供服务发现、配置验证/分发以及证书和身份相关能力，经 xDS 等协议配置代理。\nsidecar 模式以工作负载旁的 Envoy 及入口/出口网关执行流量策略；ambient 模式使用 ztunnel 提供基础 L4 连接与安全，可按需要增加基于 Envoy 的 waypoint 处理 L7 能力。\nPilot、Citadel、Galley 的历史独立部署职责逐步整合到 istiod；Mixer 是已移除的旧组件，不应列为当前必备组件。是否纳入网格及哪些流量被治理，取决于模式、注册和配置，不能说默认拦截所有服务的全部流量。",
+      "explanation": "控制平面下发配置和身份，数据平面处理实际业务流量。现代架构不等于“Envoy 唯一数据组件 + Pilot/Mixer/Citadel 三个独立控制组件”；回答旧版本时需明确历史范围。",
+      "categoryId": "bank-category-01",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Istio Gateway 资源与入口网关",
+      "content": "Istio 的 Gateway 配置资源与实际 Ingress Gateway 工作负载有什么区别？",
+      "answer": "以 Istio API `networking.istio.io/v1` 为例，Gateway 资源声明入口监听配置：`spec.selector` 选择网关工作负载，`servers` 定义端口、协议、域名和 TLS 参数。\n\nIngress Gateway 通常是运行 Envoy 的 Deployment/Pod，通过 Service 对外暴露；它才处理实际连接。Gateway 对象本身不会自动创建一个可用的公网负载均衡器。\n\nVirtualService 绑定 Gateway，定义 HTTP/TCP 路由；DestinationRule 可定义上游子集与连接策略。认证、授权等还需相应策略，不能认为创建 Gateway 就完成了全部安全控制。\n\nKubernetes Gateway API 的 `gateway.networking.k8s.io` 是另一组资源体系，字段和控制器行为不能与 Istio Gateway 混写。",
+      "explanation": "",
+      "categoryId": "bank-category-01",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Ingress 与 Istio 入口网关的区别",
+      "content": "Kubernetes 原生 Ingress 与 Istio Ingress Gateway 的核心区别是什么？",
+      "answer": "Kubernetes Ingress 是 HTTP/HTTPS 入口路由 API，依赖 Controller 执行；标准字段主要覆盖主机、路径和 TLS，扩展能力由具体控制器提供，不能因此断言实现只会基础路由。\nIstio Ingress Gateway 是代理工作负载，可由 Istio Gateway、VirtualService、DestinationRule 或支持的 Gateway API 配置监听、路由及连接策略，支持按配置处理 HTTP/TCP/TLS 等流量。\n二者不是同层对象。Istio 网关可用于入口治理，并不要求所有应用都注入 sidecar；当前控制面为 istiod，旧 Pilot/Citadel 独立组件应作为历史说明。\n按入口需求、维护成本、已有平台与策略能力选择，不把“更强大”作为无条件结论。",
+      "explanation": "区分配置 API、控制器/控制面与实际转发代理。功能是否生效取决于版本及配置，Kubernetes Ingress 控制器也可能提供丰富扩展。",
+      "categoryId": "bank-category-01",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Istio 10% 金丝雀流量配置",
+      "content": "在 Istio 中，如何通过 Ingress Gateway 实现将 10% 流量路由到新版本服务的金丝雀发布？",
+      "answer": "前提：服务 `demo` 的 v1、v2 Pod 已运行，分别带有 `app: demo` 与 `version: v1/v2` 标签；Service 的 selector 选择两个版本且服务端口为 80。示例中的网关、Service 和路由资源位于 `default` Namespace，实际入口网关需要存在且匹配 selector。\n\n```yaml\napiVersion: networking.istio.io/v1\nkind: Gateway\nmetadata:\n  name: demo-gateway\n  namespace: default\nspec:\n  selector:\n    istio: ingressgateway\n  servers:\n    - port:\n        number: 80\n        name: http\n        protocol: HTTP\n      hosts:\n        - demo.example.com\n---\napiVersion: networking.istio.io/v1\nkind: DestinationRule\nmetadata:\n  name: demo\n  namespace: default\nspec:\n  host: demo.default.svc.cluster.local\n  subsets:\n    - name: v1\n      labels:\n        version: v1\n    - name: v2\n      labels:\n        version: v2\n---\napiVersion: networking.istio.io/v1\nkind: VirtualService\nmetadata:\n  name: demo\n  namespace: default\nspec:\n  hosts:\n    - demo.example.com\n  gateways:\n    - demo-gateway\n  http:\n    - route:\n        - destination:\n            host: demo.default.svc.cluster.local\n            subset: v1\n            port:\n              number: 80\n          weight: 90\n        - destination:\n            host: demo.default.svc.cluster.local\n            subset: v2\n            port:\n              number: 80\n          weight: 10\n```\n\n域名、集群 DNS 后缀和网关标签需按环境替换；公网生产入口还需配置 TLS、DNS 和入口 Service。检查两个子集的可用端点，再以足够样本验证请求分布、错误率和延迟。权重是统计分流目标，不能要求每十个请求恰好一个命中新版本。异常时把 v2 权重降为 0，并核对数据库和会话兼容性。",
+      "explanation": "",
+      "categoryId": "bank-category-01",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Istio 外部请求流转路径",
+      "content": "请描述一个外部请求在 Istio 环境中到达目标服务的完整流量流转路径。",
+      "answer": "以 Istio sidecar 模式及传统 Istio API 为例：外部请求进入 Ingress Gateway 的 Envoy；Gateway 配置监听协议、端口和主机，VirtualService 匹配请求并选择目标服务/子集与权重；DestinationRule 定义子集标签和目标连接/负载均衡策略，网关代理转发到选中的工作负载，已纳入网格的目标 sidecar 再交给应用。\nGateway/VirtualService/DestinationRule 是配置资源，不是请求需要逐个经过的独立进程。未注入 sidecar 的目标和 ambient 模式具有不同数据路径。",
+      "explanation": "VirtualService 决定路由目标，DestinationRule 描述目标子集及连接策略。sidecar 注入需要匹配配置和条件，不是所有 Pod 自动注入；ambient 使用 ztunnel 和可选 waypoint，不能用固定 sidecar 链路代表全部 Istio 部署。",
+      "categoryId": "bank-category-01",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Kubeflow Pipelines 工作流编排",
+      "content": "Kubeflow Pipelines 如何定义和执行机器学习工作流？",
+      "answer": "Kubeflow Pipelines（KFP）用于编排机器学习工作流，而不是把整个 Kubeflow 简化成一个 CI/CD 工具。\n\n通过 SDK 定义组件的输入、输出和执行环境，将组件连接成有向无环图；编译成目标版本支持的流水线定义，在集群上创建运行。步骤可以包括数据处理、训练、评估和模型交付。\n\n可配置参数、依赖、缓存、重试与资源要求，并记录执行和产物。为了复现，需要固定代码、镜像、数据版本和配置；仅保存流水线 YAML 或启用缓存并不保证结果可复现。",
+      "explanation": "",
+      "categoryId": "bank-category-02",
+      "difficulty": "easy"
+    },
+    {
+      "title": "KServe 模型服务的灰度发布",
+      "content": "KServe 与 Kubeflow 有什么关系？以明确版本和部署模式说明模型服务如何实现灰度发布。",
+      "answer": "KServe（原 KFServing）是 Kubernetes 模型推理项目，可与 Kubeflow 集成，但不能把所有 Kubeflow 安装都说成固定默认安装同一种 Serving 栈。\n以 KServe 0.18 文档的传统 InferenceService 为例，serverless 模式依赖 Knative，支持按修订版本进行 canary rollout，可使用 predictor.canaryTrafficPercent 等受支持字段；standard 模式的发布/路由能力不同。\n灰度时确认版本、部署模式、网关实现和新旧模型兼容，设置分流比例并观察延迟、错误率和推理指标，失败回退。不能用一个未限定 API 的“Traffic 字段”解释全部部署。\n\n传统 serverless 模式可先将 `predictor.canaryTrafficPercent` 设为 10，再根据验证结果逐步提高至 100。必须确认上一已就绪修订版本存在、新修订就绪且实际路由生效；该字段不能直接套用到所有标准部署模式或其他推理 API。",
+      "explanation": "KServe 自身还有不同推理 API/功能演进。回答要明确具体资源和模式；不能把 Istio VirtualService、Knative Traffic 与 InferenceService 字段混成同一个配置。",
+      "categoryId": "bank-category-02",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Kubeflow Training Operator 与 Trainer",
+      "content": "Kubeflow 中用于管理训练任务的 Operator 是什么？它基于什么资源？",
+      "answer": "历史 Kubeflow Training Operator v1 使用 TFJob、PyTorchJob、MPIJob 等面向框架的 CRD 管理分布式训练。\nKubeflow Trainer v2 使用统一 TrainJob，引用 TrainingRuntime/ClusterTrainingRuntime 描述训练环境与拓扑，支持不同运行时及调度能力。v1 的资源不能直接当作 v2 的现行接口。\n控制器将训练声明转化为 Kubernetes 工作负载并管理其生命周期；实际支持的框架、运行时与字段以安装版本和 CRD 为准。",
+      "explanation": "先说明 v1 还是 v2，再解释训练作业与运行时模板的关系。迁移需按官方流程映射，不是把旧 YAML 的 kind 简单改名。",
+      "categoryId": "bank-category-02",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubeflow Pipelines 元数据与血缘",
+      "content": "Kubeflow Pipelines 的元数据记录什么？与模型、数据文件的存储有什么区别？",
+      "answer": "KFP 使用 ML Metadata（MLMD）记录执行、产物及其关联关系，支持查询输入、输出与工作流血缘。元数据可包括参数、状态、产物类型、属性和存储 URI。\n\n元数据数据库保存描述和关系；模型、数据集等大文件通常存放在对象存储等 artifact store，通过 URI 关联。元数据服务不是训练引擎，也不应被当作大文件仓库。\n\n旧资料中的 `kubeflow/metadata` 项目与现行 KFP 所用 MLMD 不应混淆。完整复现还依赖代码、镜像、数据版本、随机种子和运行环境，不是只有血缘图即可。",
+      "explanation": "",
+      "categoryId": "bank-category-02",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubeflow 组件与职责",
+      "content": "Kubeflow 的常见组件有哪些，分别承担什么职责？为什么需要说明实际版本与安装范围？",
+      "answer": "Kubeflow 是 Kubernetes 上的机器学习工具生态，常见组件包括 Notebooks、Pipelines、Trainer（历史 Training Operator）、Katib（超参数优化）、Hub（模型注册与目录）以及与 KServe 等推理工具的集成。\n具体安装可组合不同项目，组件名单随发行版和版本变化，没有永久固定的“核心五个”。元数据通常由 Pipelines/ML Metadata 等能力管理，不应把某个旧版组件列表当成所有部署的统一标准。",
+      "explanation": "按功能记忆开发、工作流、训练、调参、推理和追踪，再对应实际版本的项目。Kubeflow、Kubeflow Pipelines 与平台发行包的安装范围不同。",
+      "categoryId": "bank-category-02",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Cilium 的 eBPF 数据面",
+      "content": "Cilium 基于哪种内核技术实现高性能网络与安全策略？它替代了传统 iptables 的什么机制？",
+      "answer": "Cilium 的核心网络和策略数据平面使用 eBPF 程序及 map，在内核的相应 hook 处理转发、过滤和负载均衡。启用且满足条件的 kube-proxy replacement 可接管 Service 转发，并非安装 Cilium 就一定完全替代全部 iptables 用途。\nL7 策略、Ingress/Gateway 等能力可能使用 Envoy 等用户空间代理，不能把所有应用层处理都说成在 eBPF 内完成。",
+      "explanation": "eBPF 可避免部分传统规则规模带来的开销，但实际性能取决于版本、内核、挂载点、流量、功能和硬件，不能无条件断言优于 iptables。不同模式还可能保留部分 netfilter 路径。",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Hubble 网络可观测性",
+      "content": "Hubble 为 Cilium 提供哪些网络可观测能力？L7 可见性有什么前提？",
+      "answer": "Hubble 基于 Cilium 的网络事件提供流量观测，可用 CLI、Relay、UI 和指标接口查看连接、源/目标工作负载、协议、转发或丢弃结果及服务依赖关系。\n\n排障时可以关联 Pod、Namespace、身份和策略结果，判断请求是否到达、在哪个方向被拒绝，并结合指标观察流量与错误变化。\n\nL7 观测取决于协议支持、代理路径和实际配置。不能认为安装 Hubble 后所有 HTTP、DNS、加密应用负载都自动可见；端到端加密的明文通常无法直接从网络事件中取得。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Calico 与原生 NetworkPolicy 的字段区别",
+      "content": "在 Calico 中，一个基本的 NetworkPolicy 规则通常包含哪些关键字段来定义入口（ingress）规则？",
+      "answer": "先确认 API：Calico 的 `projectcalico.org/v3` NetworkPolicy 与 Kubernetes 原生 `networking.k8s.io/v1` NetworkPolicy 结构不同。\nCalico 常用 metadata.namespace、spec.selector、types、order、ingress/egress；规则使用 action、protocol、source/destination 的 selector/nets/ports 等，例如完整的 namespaced 资源（选择同一 Namespace 的 client Pod 访问 web Pod）：\n\n```yaml\napiVersion: projectcalico.org/v3\nkind: NetworkPolicy\nmetadata:\n  name: allow-client-web\n  namespace: default\nspec:\n  selector: app == 'web'\n  types:\n    - Ingress\n  ingress:\n    - action: Allow\n      protocol: TCP\n      source:\n        selector: app == 'client'\n      destination:\n        ports:\n          - 80\n```\nsource.selector 默认在策略所在 Namespace 匹配；需要跨 Namespace 时应明确配置 namespaceSelector。原生策略则使用 podSelector、ingress[].from、ingress[].ports 等，不能混写。",
+      "explanation": "Calico 策略可有显式 Allow/Deny 与顺序语义；原生 NetworkPolicy 的允许规则通常按选中策略相加，不使用 Calico 的 action/order。字段和默认拒绝行为要根据实际 API、方向与策略覆盖范围验证。",
+      "categoryId": "bank-category-03",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Calico 网络与封装模式",
+      "content": "Calico 的无封装、IP-in-IP、VXLAN 和 CrossSubnet 如何选择？BGP 与封装模式是什么关系？",
+      "answer": "Calico 的数据转发需要区分“路由怎么获知”和“数据包怎么传输”。\n\n- 无封装：直接转发 Pod IP，要求底层能正确路由这些网段；BGP 可用于路由传播，但不是所有模式都必须使用。\n- IP-in-IP：外层 IPv4 封装内层 IP 包，IP 协议号为 4，不使用 UDP 端口。\n- VXLAN：以 UDP 封装内层以太网帧，Calico 常用端口 4789；需要底层放通并规划 MTU。\n- CrossSubnet：仅在目标节点位于不同子网时封装，同子网直接路由；判断依据是节点地址和子网配置，不是 Pod 是否属于同一个 Pod CIDR。\n\nIPPool 的 `ipipMode` 和 `vxlanMode` 不能同时启用。IP-in-IP 是 IPv4 方案；VXLAN 的 IPv6 能力和前提需核对 Calico、内核与安装配置。封装、策略执行方式和 eBPF 数据面是不同维度，不能简单混成互斥的三个产品。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Multus 多网络接口",
+      "content": "Multus CNI 插件解决了 Kubernetes 网络的什么特殊需求？",
+      "answer": "Multus 是多网络的 meta-plugin，负责调用默认 CNI 和附加 CNI，让 Pod 按 NetworkAttachmentDefinition 及网络注解连接到多个网络。\n\n普通 Pod 通常有一个主网络接口（另有 loopback）；使用 Multus 后可增加接口，例如业务网、存储网或 SR-IOV 网络。各接口的地址与能力由相应插件、IPAM 和设备配置决定。\n\n多接口不会自动解决默认路由、策略路由、DNS、安全策略或负载均衡；需要明确应用绑定的地址和实际流量路径，并考虑附加网络的权限与资源约束。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Underlay 与 Overlay",
+      "content": "解释 Kubernetes CNI 网络中 Underlay 网络和 Overlay 网络的根本区别。",
+      "answer": "Underlay 是承载节点/VTEP 之间通信的底层 IP 网络，可以由物理或虚拟网络设施组成。Overlay 在其上构建逻辑网络，通过封装实现隔离和跨节点通信。\n\n- VXLAN：以 UDP 封装内层以太网帧。\n- IP-in-IP：将 IP 包封装在另一个 IP 包中，不是 TCP/UDP 封装。\n- 无隧道路由方案：直接转发 Pod IP，依赖正确的路由传播，可使用 BGP、静态路由或云路由。\nOverlay 仍要求底层地址可达、允许封装协议，并考虑 MTU。性能取决于硬件卸载、数据平面和负载，不能无条件断言某种模式更快；Overlay 中的 Pod IP 也可以通过额外路由或网关对外开放。",
+      "explanation": "底层传输网络与上层逻辑网络是两个层次；无隧道 Pod 网络只是利用底层路由的一类方案。BGP 不是 Underlay 必备协议，Overlay 也并非只允许 Pod IP 在封闭网络内使用。",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "同节点 Pod 通信路径",
+      "content": "同一个节点上的两个 Pod 如何通信？是否一定不经过路由或网络策略？",
+      "answer": "通信路径取决于 CNI 数据面，不存在统一的“永远只走 bridge”结论。\n\n- Linux bridge 方案：Pod 流量经 veth 到桥，根据邻居和桥 FDB 转发到另一个 Pod；在地址与二层条件满足时可直接桥接。\n- 路由型方案：经宿主机路由表转发到目标 Pod 的 veth，不必经过一个统一桥。\n- eBPF 方案：可在相应 hook 执行查找、转发和策略，具体路径依插件配置。\n\n普通同节点 Pod IP 通信通常不需经过物理网络；但可能经过主机路由、netfilter/eBPF 策略等。访问 Service VIP 与直接访问 Pod IP 的路径也不同。诊断应核对接口、路由、邻居、策略和抓包位置。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "VXLAN 跨节点封装与转发",
+      "content": "请详细说明VXLAN技术如何实现Kubernetes集群中Pod的跨节点通信，并阐述其关键流程与核心组件作用。",
+      "answer": "VXLAN 在可达的节点/VTEP 网络上建立逻辑二层网络。发送端先根据目的地址和网络状态确定目标 VTEP，将内层以太网帧封装成外层 IP + UDP + VXLAN 包；接收端解封装并转发至目标 Pod。\n\nVNI 是 24 位网络标识。VTEP 的寻址与转发通常涉及路由、邻居表和 FDB，具体维护方式由实现决定，不要求所有插件都采用相同 Linux bridge 路径。\n\n标准 VXLAN UDP 端口为 4789；Flannel 的 Linux VXLAN 后端常用 8472，而 Calico 常用 4789，排障必须看实际配置。封装减少可用 MTU，例如常见 IPv4/以太网条件下约增加 50 字节，IPv6、额外 VLAN 或其他封装开销会不同。\n\n检查 VTEP 可达、UDP 放通、MTU、节点/Pod 路由、邻居和 FDB；小包可达而大包异常时需重点查 MTU 和路径 MTU 发现。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Calico 无封装 BGP 的控制面与数据面",
+      "content": "Calico在BGP模式下，如何实现Pod的跨节点路由？其控制平面和数据平面分别负责什么？",
+      "answer": "在 Calico 无封装 BGP 模式下：\n\n- 控制面：Felix 负责根据工作负载、IPPool 和策略编程本机路由/数据平面；BGP 组件与节点、路由反射器或外部路由器交换 Pod 网段。\n- 数据面：Linux 内核按路由表把原始 IP 包转发到目标节点，通常不做隧道封装；NetworkPolicy 仍由配置的数据平面执行。\n\n传统 Calico 部署常使用 BIRD，但现代版本/产品配置也可能使用其他 BGP 实现，回答时应以实际 Calico 版本和配置为准。BGP 对等关系可以是节点 mesh、路由反射器或外部网络设备，不等于必须修改物理交换机。",
+      "explanation": "该题限定无封装 BGP 模式。应区分 Felix、BGP 路由传播和 Linux 数据面，并避免把 BIRD 写成所有现代 Calico 部署的固定实现。",
+      "categoryId": "bank-category-03",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Flannel 后端与 VXLAN 通信流程",
+      "content": "Flannel 的 VXLAN 和 host-gw 后端有什么区别？VXLAN 跨节点通信如何完成？",
+      "answer": "Flannel 为节点维护 Pod 子网与转发信息，常见后端包括 VXLAN 和 host-gw。Kubernetes 集成通常由 subnet manager 使用节点 PodCIDR 等信息；历史部署也有 etcd 后端，不能要求所有现代集群再单独部署一个 Flannel etcd。\n\nVXLAN 模式下，Pod 包经 veth/本机网络进入节点数据面；节点依据目的 Pod 子网找到远端 VTEP，经 VXLAN 隧道发送。远端解封装后转发到目标 Pod。常见 Linux 接口名为 `flannel.1`，Linux 默认 UDP 端口通常为 8472，以实际配置为准。\n\nhost-gw 模式通过节点作为下一跳直接路由，不进行 VXLAN 封装，通常要求节点能满足直接二层邻接等网络条件；可用性取决于底层拓扑。\n\nFlannel 的基础网络功能不等于提供原生 NetworkPolicy 执行，策略能力需由额外组件或组合方案提供。排障时检查节点子网分配、路由、VTEP/邻居/FDB、MTU和允许的协议。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "CNI 职责与调用流程",
+      "content": "简述容器网络接口（CNI）在 Kubernetes 中的基本功能及其核心工作流程。",
+      "answer": "CNI 规定容器网络插件的调用与配置约定。Kubernetes 中通常由容器运行时在 CRI Pod sandbox 的网络生命周期调用 CNI；不是为每一个普通应用容器都单独建立一套 Pod 网络。\n\n创建 sandbox 时调用 ADD，插件连接网络、配置接口与路由，地址分配可委托 IPAM；清理时调用 DEL。VERSION、CHECK 等操作的支持与使用需按 CNI 和运行时版本确认。\n\nCNI 负责 Pod 网络接入，具体插件还可能实现路由、封装和策略；Service 转发、DNS、Ingress 与 CNI 不是同一概念。检查配置目录、二进制、IPAM 分配、运行时日志和节点路由可定位创建网络失败。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Service 四种类型与 Headless",
+      "content": "Kubernetes 中 Service 有哪四种主要类型？请说出它们的名称并简述其最核心的用途或区别。",
+      "answer": "Service 的四种 `spec.type` 是：\n\n1. ClusterIP：默认类型，提供集群内的虚拟服务地址。\n2. NodePort：在节点分配端口，通常在 ClusterIP 基础上提供入口。\n3. LoadBalancer：请求外部实现提供负载均衡入口，可由云控制器、MetalLB 等实现，并非只适用于公有云。\n4. ExternalName：返回指定外部名称的 DNS CNAME，不创建普通代理转发到后端的路径。\n\nHeadless Service 设置 `clusterIP: None`，通常用于发现端点，不是第五种 type。ClusterIP、DNS、EndpointSlice 和实际转发能力要结合 selector、端点就绪与数据面配置判断。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "easy"
+    },
+    {
+      "title": "kube-proxy 机制与运行模式",
+      "content": "kube-proxy 如何实现 Service 转发？Linux 上有哪些主要运行模式，版本与替代方案有什么限制？",
+      "answer": "kube-proxy 监听 Service 和 EndpointSlice 等对象，将服务转发规则写入节点数据面。请求通常由内核规则转发，不是每次请求都进入 kube-proxy 用户态循环。\n\nLinux 的主要模式包括：\n\n- iptables：基于 netfilter 规则实现 Service 转发。\n- IPVS：使用 IPVS 服务与调度机制，并依赖其他规则处理部分功能；自 Kubernetes 1.35 起已弃用，不宜再作为新集群的默认推荐。\n- nftables：原生 nftables 模式自 Kubernetes 1.33 稳定，需满足内核、网络插件与版本条件。稳定状态不表示所有现有集群都已自动切换。\n\nWindows 使用不同的数据面，例如 kernelspace。Cilium 等插件可用 eBPF 实现 kube-proxy replacement，但要配置和验证兼容性，不能仅因安装插件就认为所有 Service 流量已被替换。排障先确认实际模式，再检查端点、策略、连接跟踪和对应规则。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Calico 与 Flannel 选型对比",
+      "content": "calico 和 flannel 的区别是什么？",
+      "answer": "Calico 与 Flannel 需要按实际后端比较：\n\n- Flannel 主要提供基础 Pod 网络，VXLAN、host-gw 等后端适应不同底层条件；基础 Flannel 本身通常不执行 NetworkPolicy。\n- Calico 提供 Pod 网络与策略能力，可使用无封装路由、IP-in-IP、VXLAN，以及不同策略/数据面实现；并非必须对外建立 BGP 对等。\n- 策略需求、底层路由与封装放通、MTU、操作系统/内核支持、规模、故障定位和团队维护能力决定选型。\n\n比较时采用相近资源、负载和策略配置做压测。不能断言 Calico 一定更快，或 Flannel 无条件兼容任意底层网络。也有组合网络与策略实现的方案，需明确谁负责哪一部分。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 外部访问与服务暴露",
+      "content": "k8s 的服务暴露主要有几种",
+      "answer": "外部访问方案主要有：\n\n- NodePort：访问节点地址与分配端口；通常每个 Service port 可分配自己的 nodePort，而不是每个 Service 永远只有一个端口。节点防火墙与数据面必须允许访问，`ss` 不一定显示一个普通监听进程。\n- LoadBalancer：由云集成或 MetalLB 等提供入口，可能是公网也可能是内网；健康检查与源地址保留取决于实现和配置。\n- Ingress/网关：通过控制器和代理实现 HTTP 路由、TLS 等，代理本身仍需通过 Service 或其他方式获得可达入口。\n- 调试可用受授权的 port-forward，它通常不作为稳定生产入口。\n\nClusterIP 通常用于集群内部；ExternalName 返回 DNS 别名，Headless 用于端点发现，不能把它们当作公网反向代理。选择时考虑协议、域名、TLS、权限、客户端源地址、会话、流量策略和成本。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "跨 Namespace 的服务通信",
+      "content": "不同命名空间下的容器想要互相通信，能怎么实现",
+      "answer": "不同命名空间的 Pod 默认可以通过集群网络互通，除非 NetworkPolicy 或其他安全策略限制。推荐通过 Service 访问：\n\n- 完整域名：`<service>.<namespace>.svc.cluster.local`\n- 常用跨命名空间短名：`<service>.<namespace>`\n\nPod IP 可以直连，但 Pod 重建后地址可能变化，不适合作为稳定依赖。Ingress/Gateway、NodePort、LoadBalancer 主要解决集群外或特定入口访问，普通跨命名空间通信不需要绕到集群外。排障时检查 DNS、Service/EndpointSlice、端口、NetworkPolicy 和 CNI。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "easy"
+    },
+    {
+      "title": "滚动更新与 Service 地址稳定性",
+      "content": "滚动更新会使 service 的 ip 改变吗？",
+      "answer": "如果同一个 Service 对象与 ClusterIP 保持不变，Deployment 滚动更新时 Service 的虚拟地址通常保持稳定，EndpointSlice 随 Pod 与就绪状态更新。\n\nPod IP 可以变化，已有连接也不会自动迁移到新 Pod。端点摘除、规则传播、连接池、重试和应用优雅终止都影响用户体验，不能只凭 ClusterIP 稳定保证没有中断。\n\n需要 readiness、合理更新策略和容量，结合终止宽限与连接排空验证真实流量。若删除重建 Service 或变更入口资源，应重新核对地址和外部依赖。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod 访问外部数据库故障排查",
+      "content": "Pod 访问外部数据库不通时，如何区分网络、认证和数据库问题？",
+      "answer": "先取得真实错误，区分 DNS 失败、超时、Connection refused、TLS 失败、认证拒绝和查询超时。\n\n从发生问题的 Pod 网络与身份发起检查：DNS、目标地址与端口、路由、NetworkPolicy、节点防火墙、安全组、NAT/出口地址；节点能访问不能证明 Pod 能访问。\n\n数据库侧核对监听地址、访问来源限制、账号授权、TLS、连接上限与日志。通过同一 Pod 中受授权的客户端测试连接，避免把凭证写入公开日志；用两端抓包或指标定位包是否到达与响应是否返回。\n\n修复后从实际应用路径验证读写和恢复，保留最小允许规则，而不是直接关闭全部网络限制。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes Service DNS 解析",
+      "content": "K8S 的 service 解析是什么去做的？",
+      "answer": "Kubernetes 集群 DNS 通常由 CoreDNS 提供。它监听 Service、EndpointSlice 等资源，为 Service 生成 DNS 记录。\n\n同命名空间 Pod 可使用 `<service>`；跨命名空间通常使用 `<service>.<namespace>`；完整域名为 `<service>.<namespace>.svc.cluster.local`，其中集群域可能被管理员修改。\n\n普通 ClusterIP Service 的 DNS 通常解析到虚拟 IP；Headless Service 则返回后端端点地址。排障可检查 Pod 的 resolv.conf、CoreDNS 日志与指标、Service、EndpointSlice 以及 NetworkPolicy。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod 出站、SNAT 与固定出口",
+      "content": "Pod 访问集群外部地址时，默认链路是什么？需要固定出口或受控出站时如何设计？",
+      "answer": "Pod 出站路径由 CNI、路由、策略和环境决定。无封装方案可直接路由 Pod IP；IP-in-IP/VXLAN 等可能用于节点之间传输，但跨节点隧道不等于访问互联网的固定出口。\n\n访问外部时，源 Pod IP 如果不能被对端正确路由，常通过节点或网关 SNAT 为可返回的地址。是否执行 SNAT、在哪里执行取决于 IPPool、CNI、路由和云网络配置；不能认为所有 Pod 外访一定被节点 NAT。\n\n需要固定出口时可设计受支持的 egress gateway、NAT gateway 或受控代理，核对故障域、回程、源地址保留和策略。Ingress 是进入服务的方向，不替代 Pod 出站规则。\n\n排障从 Pod 的 DNS、路由和策略到节点/网关抓包，确认真实出口地址及对端安全组/白名单，并验证双向路径。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Headless Service 的服务发现",
+      "content": "Headless Service 与普通 Service 有何区别？典型应用和 DNS 行为是什么？",
+      "answer": "Headless Service 设置 `spec.clusterIP: None`，不分配 ClusterIP VIP；客户端通过端点发现自己选择后端，常用于 StatefulSet、数据库成员发现和客户端负载均衡。\n带 selector 时，控制器生成 EndpointSlice，DNS 通常返回符合就绪条件的端点地址；`publishNotReadyAddresses` 等配置可改变就绪过滤行为。StatefulSet 配合 governing Service 可获得稳定 Pod 域名，但 Pod IP 仍可能变化。\nSRV 记录依赖命名端口等条件，不是所有 Headless Service 自动拥有；DNS 返回顺序也不是稳定成员顺序的保证。没有 selector 的 Headless Service 需自行维护端点，不能一律说返回所有 Pod IP。",
+      "explanation": "稳定 DNS 身份、当前 IP 和 DNS 返回顺序是不同概念。Headless Service 不执行 kube-proxy 的 VIP 负载均衡，连接重试和后端选择由客户端承担。",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Namespace 与 NetworkPolicy 隔离",
+      "content": "Kubernetes 中 Namespace 和 NetworkPolicy 分别解决什么问题？如何实现网络隔离？",
+      "answer": "Namespace 提供命名与管理边界，不自动隔离网络；不同 Namespace 的 Pod 在默认网络条件下通常互通。\n\n使用支持 NetworkPolicy 的 CNI，为目标 Pod 配置 ingress/egress 默认拒绝，再明确允许 DNS、业务依赖、监控等流量。原生允许策略通常相加；同一个 peer 内的 namespaceSelector 与 podSelector 可共同限制，分成多个 peer 时是不同的允许分支。\n\n镜像通常由节点容器运行时拉取，Pod NetworkPolicy 不能直接当作节点拉镜像流量的控制规则。节点出口、hostNetwork 和其他主机流量应按 CNI/平台能力单独验证。\n\n测试允许与拒绝路径、实际源地址与 Service/NAT 影响。多租户还需 RBAC、配额、Pod 安全、凭证与必要的节点隔离，不能只创建 Namespace。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Calico 组件与通信验证",
+      "content": "如何去判断 calico 是否正常工作？",
+      "answer": "按实际安装方式发现组件，不把 Namespace 固定成 kube-system：manifest 安装常见 kube-system，operator 安装常见 calico-system，可先执行 `kubectl get pods -A -o wide`。\n\n检查 calico-node、相关 controllers/operator 状态与 Events，使用发现的 Namespace、Pod 和容器名读取日志。核对版本、节点 Ready、CNI 配置、IPPool 余量、Felix 与 Typha（若使用）连接。\n\n数据面按实际模式检查路由、BGP、IP-in-IP/VXLAN、iptables/nftables/eBPF；`calicoctl node status` 主要反映 BGP，不是所有模式的完整健康证明，工具版本和权限需匹配。\n\n从同节点/跨节点 Pod 测试 Pod IP、Service、DNS 与出站，并执行策略允许和拒绝测试。结合丢包、延迟、指标与两端抓包定位；组件 Running 或策略对象存在不证明端到端网络正确。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "hard"
+    },
+    {
+      "title": "跨节点 Pod IP 与 Service 通信",
+      "content": "跨节点 Pod IP 通信有哪些模型？与访问 Service VIP 有什么区别？",
+      "answer": "Pod 网络通常要求地址可区分并具有可达的双向路径，实际由 CNI 和底层网络实现。常见模型为：\n\n- 无封装路由：通过静态路由、BGP 或云路由传播 Pod 网段，直接转发 Pod IP。\n- Overlay：节点之间用 VXLAN、IP-in-IP 等封装，接收端解封装并交付 Pod，需底层可达、放通协议且 MTU 合理。\n\n同节点和跨节点路径依实现不同；eBPF 是数据面技术，可与路由或封装模型组合，不应当成完全独立的第三种物理网络。\n\n直接访问 Pod IP 不需要先经过 Service VIP。访问 ClusterIP 则由 kube-proxy 或替代数据面将 VIP 转发至符合条件的端点；CoreDNS 提供名称解析，不承担每个业务包的转发。\n\n排障核对源/目标 Pod、节点、路由或隧道、策略、端点与回程。hostNetwork、附加网络等场景应另看具体模型，不能把普通 Pod 默认假设硬套到所有工作负载。",
+      "explanation": "",
+      "categoryId": "bank-category-03",
+      "difficulty": "medium"
+    },
+    {
+      "title": "存活、就绪与启动探针",
+      "content": "livenessProbe、readinessProbe 和 startupProbe 有什么区别？如何避免错误探针扩大故障？",
+      "answer": "livenessProbe 检查容器是否需要重启，连续失败达到阈值后 kubelet 触发容器终止/重启，具体受重启策略等条件影响；readinessProbe 判断能否接收流量，失败使端点未就绪，普通 Service 通常不再选择它转发新请求。\nstartupProbe 为慢启动应用提供启动窗口；配置后在成功前不会执行 liveness/readiness 探针。失败达到阈值会按机制终止容器。\n探针要有轻量且符合业务的判断条件，并合理配置超时、周期和失败阈值。\n\nreadiness 不会断开全部已有连接。liveness 不宜把共享外部数据库暂时故障当作所有副本必须重启的条件，否则可能引发级联重启。探针端点应轻量并能反映相应状态。",
+      "explanation": "探针帮助恢复和流量管理，但不单独保证零中断。readiness 不等于断开所有既有连接，liveness 也不应把共享外部依赖故障直接当作全体容器必须重启的依据。",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod Phase 与容器状态",
+      "content": "Pod 的 Phase 有哪些？CrashLoopBackOff 是否是 Pod Phase？",
+      "answer": "Pod 的生命周期不能简单理解为每个 Pod 都按固定顺序经过所有状态。常见 Pod Phase：\n\n- Pending：Pod 已被接受，但尚未完成调度或至少一个容器尚未准备好运行。\n- Running：Pod 已绑定到节点，至少一个容器正在运行、启动中或重启中。\n- Succeeded：所有容器都成功终止，且不会再重启。\n- Failed：所有容器已终止，且至少一个容器失败终止。\n- Unknown：控制面无法获取 Pod 状态，常见于节点通信异常，不是正常终止阶段。\n\n`CrashLoopBackOff`、`ImagePullBackOff` 是 kubectl 展示的容器等待原因，不是 Pod Phase。排障应结合 `kubectl describe pod`、Events、容器状态、探针、退出码和日志。",
+      "explanation": "Pod Phase 是粗粒度生命周期字段，不是固定顺序的状态机。kubectl get pods 的 STATUS 列还可能展示 CrashLoopBackOff、Terminating 等原因，不能直接等同 status.phase；应结合容器状态、Conditions 和 Events 判断。",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "ConfigMap、Secret 与配置更新",
+      "content": "ConfigMap 和 Secret 有什么区别？更新后容器是否会立即读取新值？",
+      "answer": "ConfigMap 用于非敏感配置；Secret 用于密码、令牌、证书等敏感数据。Secret 的 base64 是编码，不能替代加密，应结合 RBAC、etcd 静态加密、传输保护和审计控制访问。\n\n二者都可通过环境变量或挂载文件提供给容器：\n\n- 环境变量在容器创建时取得，修改对象不会自动刷新已有容器的环境。\n- 普通投射卷的文件通常会在传播延迟后更新，应用还需支持重新读取；使用 subPath 挂载的文件不会自动更新。\n- immutable 对象不能直接修改数据，需使用新对象并更新工作负载引用。\n\n发布时可以使用版本化配置或配置摘要触发滚动更新。Secret 轮换应安排新旧凭证过渡、应用重新加载和撤销验证；不要把真实凭证写入镜像、Git 或日志。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod 级容器重启策略",
+      "content": "pod 的重启策略有哪几种",
+      "answer": "Pod 级 `restartPolicy` 有 Always、OnFailure、Never，默认是 Always。它主要控制 kubelet 如何在同一个 Pod、同一节点上重启已经退出的容器，而不是重新创建原 Pod 对象。\n\n- Always：容器无论成功还是失败退出都重启。\n- OnFailure：仅非零退出时重启。\n- Never：容器退出后不自动重启。\n\nDeployment/ReplicaSet 的 Pod 模板通常只允许 Pod 级 Always；Job 常用 OnFailure 或 Never。控制器在 Pod 丢失或失败时创建替代 Pod，与 kubelet 在原 Pod 内重启容器是两个层次。\n\n还需区分容器类型和版本：普通 init 容器、采用容器级 Always 的原生 sidecar，以及受特性门控影响的容器级重启策略/规则有各自语义，不能将 Pod 级三种策略无条件套用到全部容器。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "kubectl 与 kubelet 的职责",
+      "content": "kubectl 和 kubelet 有什么区别？用户可以使用 kubelet 吗？",
+      "answer": "kubectl 是与 Kubernetes API Server 交互的命令行客户端，常用于查询、创建和更新资源，权限由身份与 RBAC 等控制。\n\nkubelet 是节点代理，监视分配给本节点的 Pod 规格，并通过 CRI 运行时协调容器、探针、卷挂载和节点/Pod 状态上报。它不负责整个集群的调度，也不是简单只靠定时轮询执行 kubectl 命令。\n\n普通工作负载管理通常使用 kubectl/API；管理员还可管理 kubelet 配置、服务和受保护的 kubelet API，因此不能绝对说“用户不能使用 kubelet”。节点 API 应开启认证授权并限制访问。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 控制平面与节点组件",
+      "content": "K8s 里 master 有哪些核心组件，分别是做什么用的？",
+      "answer": "控制平面主要包含：\n\n- kube-apiserver：API 入口，进行认证、授权和准入，读写集群状态。\n- etcd：存储集群状态，访问应受保护并有备份恢复方案。\n- kube-scheduler：为尚未绑定节点的 Pod 选择节点。\n- kube-controller-manager：运行控制循环，使实际状态向期望状态收敛。\n- cloud-controller-manager：在相应云集成中管理云资源相关逻辑，不是所有集群都必需。\n\n节点主要运行 kubelet 和 CRI 容器运行时，并配置 CNI。Service 数据面可能由 kube-proxy 或替代实现提供；CoreDNS 等属于常见插件，而不是必须和每个控制平面组件放在同一进程。\n\n控制组件通常通过 API Server 交互，不能说所有组件都直接读写 etcd。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Deployment 与 StatefulSet 对比",
+      "content": "deployment 和 statefulset 有什么区别？",
+      "answer": "Deployment 主要管理无状态工作负载；StatefulSet 用于需要稳定身份、稳定网络标识和有序操作的工作负载。\n\n1. Pod 名称：Deployment Pod 通常为 `<deployment>-<replicaset-hash>-<suffix>`；StatefulSet 为 `<statefulset>-<ordinal>`，例如 web-0。\n2. 创建/缩容：Deployment 通常可并行；StatefulSet 默认按序创建、逆序缩容，也可配置 PodManagementPolicy。\n3. 网络身份：StatefulSet 常配合 Headless Service 提供稳定 DNS。\n4. 存储：StatefulSet 可通过 volumeClaimTemplates 为每个副本创建独立 PVC。Deployment 也能挂载 PVC，但删除一个 Deployment Pod 不会自动删除 PVC；需要区分 PV 回收策略和 StatefulSet PVC 保留策略。\n5. 更新：Deployment 与 StatefulSet 都支持滚动更新，但顺序、分区和可用性语义不同。\n\n数据库是否适合 StatefulSet 还取决于应用自身复制、存储和故障恢复能力。\n\nStatefulSet 默认滚动更新通常按序号从高到低推进，可用 partition 控制更新范围；有序启动策略与更新策略不能混为一谈。稳定名称不表示 Pod IP 不变，也不自动实现数据库高可用。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Deployment 手工扩容与 HPA",
+      "content": "如果原本一个 pod 是两个副本，我想要扩容成三个副本，如何操作？",
+      "answer": "扩容的是管理 Pod 的控制器副本数，例如 Deployment：\n\n```bash\nkubectl scale deployment demo -n default --replicas=3\n```\n\n也可以修改清单中的 `spec.replicas: 3` 后执行：\n\n```bash\nkubectl apply -f manifest.yaml\n```\n\n临时编辑可使用 `kubectl edit deployment demo -n default`。执行后通过 `kubectl rollout status deployment/demo -n default` 和 `kubectl get pods -n default` 验证。若配置了 HPA，手工副本数可能随后被 HPA 调整，应先确认控制关系。\n\n命令中的 demo/default/manifest.yaml 是示例资源、Namespace 和文件名，需按实际对象替换。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "PV、PVC、StorageClass 与 CSI",
+      "content": "Kubernetes 持久化存储包含哪些核心抽象？常见存储后端有哪些？",
+      "answer": "持久化存储的核心抽象：PV 表示集群卷，PVC 是工作负载的存储申请，StorageClass 定义动态供应器与参数，CSI 是存储驱动接口。驱动能力决定供应、附加、挂载、快照与扩容等是否可用。\n\n访问模式要准确理解：RWO 通常表示单节点读写，不是严格一个 Pod；RWOP 限制单 Pod，需支持的 CSI 与版本条件；RWX 为多节点读写，必须由后端支持。\n\n常见后端包括云块盘、Ceph/RBD、NFS、分布式文件存储和 Local PV。比较性能、拓扑、故障域、快照、扩容、回收策略和恢复能力；WaitForFirstConsumer 可让供应/绑定结合调度拓扑。\n\nLocal PV 需要 node affinity 等约束，节点故障不会自动把本地数据变成另一个节点的数据。数据库还需自身复制、备份恢复、容量与明确的 RPO/RTO；StatefulSet 并不替代这些能力。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "hard"
+    },
+    {
+      "title": "创建 Pod 的组件协作流程",
+      "content": "通过 Deployment 创建 Pod 时，API Server、控制器、Scheduler、kubelet 和运行时如何协作？",
+      "answer": "典型链路是：\n\n1. kubectl/客户端提交 Deployment，API Server 完成认证、授权与准入并持久化状态。\n2. Deployment 控制器管理 ReplicaSet，ReplicaSet 控制器创建所需 Pod；不是 Scheduler 直接创建 Deployment 的全部 Pod。\n3. Scheduler 为未调度 Pod 选择节点并提交绑定。\n4. 目标 kubelet 观察到 Pod，协调卷、镜像与 CRI 运行时；运行时创建 sandbox 并通过 CNI 完成网络，按 OCI 机制运行应用容器。\n5. kubelet 执行探针并上报状态；若有匹配的 Service，控制器维护 EndpointSlice 等服务端点。\n\n调度成功不意味着已经运行，网络/镜像/卷或应用启动仍可能失败。不同步骤可能异步交错，节点 agent 和控制器持续调和实际状态。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Pod sandbox、网络与存储",
+      "content": "Pod 的网络与存储分别由哪些组件协作管理？pause 容器起什么作用？",
+      "answer": "Pod 网络不是由 pause 容器“管理”的：\n\n- pause/infra 容器主要持有 Pod 共享的网络等 Linux namespace，其他业务容器加入这些 namespace。\n- kubelet 通过 CRI 与容器运行时协作，运行时调用 CNI 插件为 Pod 配置接口、IP、路由和清理网络。\n\nPod 存储由多个组件协作：\n\n- kubelet 根据 PodSpec 准备并挂载卷；\n- CSI 驱动及相关控制器完成卷供应、附加、挂载和扩容；\n- emptyDir 等临时存储、容器可写层和日志受到节点临时存储及垃圾回收策略影响。\n\n因此应区分“namespace 持有者”“网络配置者”和“存储生命周期管理者”。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 工作负载控制器",
+      "content": "K8S 控制器有哪些类型？区别是啥",
+      "answer": "常见工作负载控制器：\n\n- Deployment：通过 ReplicaSet 管理副本，支持 RollingUpdate 和 Recreate；滚动过程由 maxSurge/maxUnavailable 等配置决定，不保证每次都先增加新 Pod 再删除旧 Pod。\n- StatefulSet：稳定的名称、序号和网络身份，可为副本创建独立 PVC；默认有序行为可以按支持的策略配置。\n- DaemonSet：在符合条件的节点上维护实例，常用于网络、日志、监控代理。\n- Job：管理到完成为止的任务，可重试失败实例；CronJob 按时间创建 Job，并需考虑并发和幂等。\n- ReplicaSet：维持副本数，通常由 Deployment 管理。\n控制器重建 Pod 与 kubelet 在同一 Pod 内重启容器是不同层次。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "专用节点、亲和性与污点",
+      "content": "deployment 的 pod 我想指定在某个节点运行该怎么做？如果不想要其它 pod 在上面运行要怎么做？",
+      "answer": "用标签配合 nodeSelector 或 required nodeAffinity 限定节点，再用污点阻止普通 Pod 调度：\n\n```bash\nkubectl label node worker-01 dedicated=study\nkubectl taint node worker-01 dedicated=study:NoSchedule\n```\n将下面片段合入完整 Deployment 资源（不是独立可提交清单）：\n\n```yaml\nspec:\n  template:\n    spec:\n      nodeSelector:\n        dedicated: study\n      tolerations:\n        - key: dedicated\n          operator: Equal\n          value: study\n          effect: NoSchedule\n```\nnodeSelector 限定能去哪；toleration 只是允许容忍污点，不保证一定调度到该节点。NoSchedule 不驱逐已有 Pod，其他同样具有容忍度的 Pod 仍可进入，系统 DaemonSet 也要按其实际容忍配置检查。\n\nworker-01 是示例节点名，修改标签/污点前核对真实节点与影响。上述 YAML 是工作负载模板片段，需合入完整资源；对已运行 Pod 的影响与调度约束应另行验证。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Pod 与单个容器的区别",
+      "content": "你对 K8S 是如何理解的？K8S 的 pod 和 docker 容器的区别在哪",
+      "answer": "Kubernetes 是声明式容器编排平台，负责部署、调度、自愈、扩缩容、服务发现和发布。\n\nPod 与单个容器的区别：\n\n1. Pod 是 Kubernetes 的基本调度单位，可包含一个或多个紧密协作的容器。\n2. 同一 Pod 中的容器共享网络 namespace 和 Pod IP，可通过 `localhost` 通信，也可共享卷。\n3. 容器是由运行时启动的进程隔离环境；Pod 还包含调度、重启策略、探针、卷和网络等编排语义。\n4. kubelet可在同一 Pod 内重启容器；控制器则可在 Pod 丢失时创建替代 Pod。\n5. 传统资源 requests/limits 主要配置在每个容器上，调度时按 Pod 中容器需求聚合；较新版本还可能提供版本受限的 Pod 级资源功能，回答时应说明版本。\n\nDocker 只是容器工具/运行时生态之一，不应与 Pod 做完全同层级比较。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Deployment 镜像更新与回滚",
+      "content": "由 Deployment 管理的应用如何更新镜像、验证发布并回滚？滚动更新是否总是先增后删？",
+      "answer": "先确认工作负载由哪个控制器管理，准备带固定版本或 digest 的镜像，并核对镜像拉取权限、资源容量、探针以及新旧应用和数据库兼容性。\n\n1. 更新 Deployment 的 Pod 模板镜像。API Server 保存声明后，Deployment 控制器创建或复用相应 ReplicaSet，由 ReplicaSet 控制器创建 Pod。\n2. Scheduler 为新 Pod 选择节点，kubelet 通过容器运行时拉取镜像并启动容器；调度成功不代表应用已就绪。\n3. 默认 RollingUpdate 根据 maxSurge、maxUnavailable 和可用状态调整新旧 ReplicaSet，不能保证每次都先增加新 Pod 再删除旧 Pod。Recreate 策略则先终止旧 Pod。\n4. 通过 rollout status、Pod Events、readiness、日志及真实业务指标验证。minReadySeconds 可规定就绪持续时间；应用还需处理终止、连接排空和重试。\n\n```bash\nkubectl set image deployment/demo app=registry.example.com/demo:1.1 -n default\nkubectl rollout status deployment/demo -n default --timeout=120s\nkubectl rollout history deployment/demo -n default\n# 仅在确认需要回退且保留了上一修订时执行\nkubectl rollout undo deployment/demo -n default\nkubectl rollout status deployment/demo -n default --timeout=120s\n```\n\ndemo、app、default 和镜像地址均为示例，需要先核对真实资源和容器名。超时或 ProgressDeadlineExceeded 不会自动触发应用回滚；GitOps 环境还需同步声明源。rollout undo 回退 Pod 模板，不会恢复数据库、已改写的数据或所有外部配置；不可变配置和完整备份需独立管理。",
+      "explanation": "Deployment 调整 ReplicaSet，ReplicaSet 管理 Pod；更新顺序由策略和可用性约束决定。发布与回退都要验证实际业务，不能只看命令返回。",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "API Server 与 etcd 端口",
+      "content": "像 apiserver 的端口和 etcd 的端口记得吗",
+      "answer": "默认 apiserver 的端口是 6443（HTTPS），etcd 的端口是 2379（客户端通信端口），2380（etcd 集群节点间通信端口）。\n\n这些是默认值，可受实际配置影响。API Server、etcd 客户端与 peer 接口承担不同职责，不能把 etcd 暴露为普通公网数据库；应核对 TLS、身份、监听地址与网络访问范围。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "HPA、VPA 与节点扩缩容",
+      "content": "K8S 的自动扩缩容是如何实现的？有实际运用过缩容吗",
+      "answer": "扩缩容分为工作负载副本、容器资源和节点三个层次：\n\n- HPA 根据资源、自定义或外部指标调整副本。CPU utilization 通常以 requests 为分母，需要合理 requests 与指标服务；配置 min/max、稳定窗口和速率策略，避免抖动和缩容过快。\n- VPA 给出或应用资源建议，是否驱逐重建或支持原地调整取决于版本、模式和条件，不是无条件修改全部 requests/limits。\n- 节点自动扩缩容为不可调度 Pod 增加资源，并在满足调度、驱逐和其他约束后回收节点；PDB 常影响节点 drain/驱逐。\n\nHPA 降低 Deployment 副本数不直接受 PDB 保护，缩容可用性需通过 HPA 行为、最小副本、终止处理和应用设计保障。监控队列、错误和业务效果，验证峰值扩容与低谷缩容。\n\n个人经历只填写真实指标、配置、问题和结果，实验与生产明确区分。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Pod Pending 分阶段排查",
+      "content": "一个 pod 处于 pending 状态有哪几种可能？",
+      "answer": "Pod 显示 Pending 时，应先看 `kubectl describe pod <pod> -n <namespace>` 的 Events，再按阶段判断：\n\n1. 调度失败：CPU/内存不足、污点未容忍、亲和性/节点选择器不满足、端口或拓扑约束冲突。\n2. 存储未就绪：PVC 未绑定、CSI 挂载失败或卷拓扑不满足。\n3. Pod sandbox/CNI：网络插件异常、地址耗尽、创建 sandbox 失败。\n4. 镜像与容器准备：镜像拉取失败、鉴权失败等情况下 Pod Phase 可能仍是 Pending，但要查看具体容器 Waiting 原因。\n5. 节点问题：节点 NotReady、kubelet 或容器运行时异常。\n\n启动命令执行后反复退出通常表现为容器 `CrashLoopBackOff`，不应与“无法调度的 Pending”混为一谈。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "kubelet 停止的影响",
+      "content": "一个 Node 节点的 kubelet 挂了，会有什么影响？",
+      "answer": "kubelet 停止后，已经运行的容器通常仍由运行时继续执行，并不会立即全部退出。但该节点无法正常执行新的 Pod 生命周期操作、探针、状态上报和容器重启管理。\n控制面在节点心跳/Lease 超过容忍时间后，由节点控制器更新 Ready 条件（失联常表现为 Unknown，命令行可能显示 NotReady），并添加相关污点。新 Pod 的调度和已有 Pod 的驱逐取决于状态、污点、容忍时间及控制器策略，不是立即迁走全部 Pod。\nkube-proxy 是独立组件，kubelet 停止不必然使已存在的 Service 转发规则失效。恢复时检查 kubelet、运行时、证书和网络，并验证节点及业务状态。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 学习路径与实验验证",
+      "content": "请列举学习 Kubernetes（K8s）的主要途径，并说明每种途径的特点与适用场景。",
+      "answer": "先明确目标 Kubernetes 版本，学习 API 资源、控制器调和、调度、网络、存储与权限，再在受控实验环境验证。\n\n实践顺序可为：部署应用与配置 → 探针和 Service → 发布回滚 → PVC/CSI → RBAC 与 NetworkPolicy → 指标/日志/追踪 → 故障诊断与备份恢复 → 升级、容量和高可用。\n\n使用对应版本官方文档，保存配置与实验记录，主动复现 Pending、镜像拉取、DNS/网络、卷和探针故障。学习成果用可运行配置、排障过程、恢复演练与讲解验证，而不是只背命令或统计课程时长。个人经历填写实际完成的实验或生产任务。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 故障案例的真实表达",
+      "content": "K8S 集群维护遇到过什么问题，如何解决的？",
+      "answer": "这道题必须使用本人真实故障案例，建议按“现象—影响—证据—根因—处理—复盘”回答。\n\n可参考的排障结构：\n\n1. 先说明影响范围和告警现象，例如节点 NotReady、Pod 无法调度、DNS/网络异常或控制面延迟。\n2. 给出使用过的证据：Events、组件日志、etcd/kubelet/CNI 指标、网络抓包或时间线。\n3. 区分直接原因和根因，并说明为何排除其他可能。\n4. 描述止损、恢复、验证和回滚。\n5. 给出后续改进，例如告警、容量、变更流程、备份和演练。\n\n不要虚构“etcd 脑裂”。仅仅网络延迟并不等于脑裂，盲目增加 etcd 成员或调整心跳也可能降低稳定性。没有生产案例时，应明确说明做过哪些实验或演练。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 安装前置条件",
+      "content": "服务器准备安装 K8S 需要设置哪些参数优化",
+      "answer": "安装 Kubernetes 前应以目标版本、发行版、CNI、容器运行时和 kube-proxy 模式的官方要求为准：\n\n1. 配置主机名、DNS、时间同步、证书时间和稳定网络。\n2. 安装并配置 CRI 运行时，核对 cgroup driver。\n3. 配置 IP 转发及 CNI 所需内核模块/sysctl；桥接 netfilter 参数是否需要取决于数据平面。\n4. Swap 应按 Kubernetes 版本和 NodeSwap 配置决定，不能脱离版本一律关闭。\n5. 只有使用 IPVS 模式才需要相应 IPVS 内核模块；当前还可能使用 iptables/nftables。\n6. 不应直接关闭防火墙，应按控制面、节点、CNI 和业务需要开放最小端口并验证规则。\n7. 规划 Pod/Service CIDR、MTU、磁盘、日志、内核版本和资源预留。\n\n变更前保存基线和回滚方法，安装后运行健康和网络连通性测试。\n\n优先核对 cgroup v2 和运行时/kubelet 驱动一致性：从 Kubernetes 1.35 起，默认配置对 cgroup v1 的兼容约束更严格，应按目标版本安装要求处理。IPVS 从 1.35 起弃用，新部署先评估受支持模式，不能照旧教程无条件加载 IPVS 并关闭所有保护。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "medium"
+    },
+    {
+      "title": "kubeconfig、令牌与凭证管理",
+      "content": "Kubectl 如何存储一个 token 凭证？",
+      "answer": "kubectl 默认读取 `~/.kube/config`，也可通过 `KUBECONFIG` 或 `--kubeconfig` 指定文件。令牌属于 users 条目中的 user，而不是 auth-provider 的通用替代写法：\n\n```yaml\napiVersion: v1\nkind: Config\nclusters:\n  - name: example\n    cluster:\n      server: https://api.example.com:6443\n      certificate-authority: /path/to/ca.crt\nusers:\n  - name: example-user\n    user:\n      token: REPLACE_WITH_VALID_TOKEN\ncontexts:\n  - name: example-context\n    context:\n      cluster: example\n      user: example-user\ncurrent-context: example-context\n```\n示例值需要按集群替换。配置文件按敏感凭证保护；优先使用集群支持的 exec 凭证插件或短期令牌，过期后续签，避免长期明文令牌和跳过 TLS 验证。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 的价值与适用边界",
+      "content": "k8s 的优势是什么",
+      "answer": "Kubernetes 的主要价值包括声明式部署、自愈、滚动发布、服务发现、弹性伸缩、资源调度和可扩展 API。\n\n需要避免两个过度表述：\n\n1. Kubernetes 不会天然提高所有应用的资源利用率，效果取决于 requests/limits、调度、弹性策略和工作负载特征。\n2. Namespace 主要提供命名和管理边界，不等于完整的多租户安全隔离。多租户还需要 RBAC、NetworkPolicy、ResourceQuota、LimitRange、Pod Security、节点/运行时隔离和审计等措施。\n\n回答时可结合业务规模说明使用 Kubernetes 带来的收益与新增的复杂度。",
+      "explanation": "",
+      "categoryId": "bank-category-04",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Docker 架构与容器隔离",
+      "content": "docker 的工作原理",
+      "answer": "Docker 由客户端、daemon/API、镜像/容器/网络/卷等对象组成；Docker Engine 可通过 containerd 和 OCI 运行时执行容器。\n\n容器通常共享宿主机内核，使用 namespaces 隔离视图、cgroups 管理资源，并结合 capabilities、seccomp 和其他安全控制；它不是为每个应用运行一个完整虚拟机。\n\n镜像提供分层的构建产物，容器有可写层，持久数据通常放入 volume 或受管理的挂载。不能把容器可写层当作可靠数据库备份。\n\n存储实现依版本和配置：传统部署常见 overlay2 storage driver；较新的默认安装也可能使用 containerd image store/snapshotters，应以 `docker info` 为准，不要认为所有 Docker 都固定使用 overlay2。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Dockerfile 的作用",
+      "content": "dockerfile 是干什么的",
+      "answer": "Dockerfile 是声明镜像构建步骤的文件，构建器结合 build context 执行 FROM、COPY、RUN 等指令生成镜像；它不是容器运行时的普通 Shell 脚本。\n\n使用 .dockerignore 控制构建上下文，固定基础镜像版本或 digest，合理安排层缓存，并用多阶段构建减少最终产物。明确 WORKDIR、USER 和启动命令；生产容器尽量以适当的非 root 权限运行。\n\nCOPY 复制上下文文件；ADD 还有额外语义，普通复制优先选择明确的 COPY。exec 形式 ENTRYPOINT/CMD 有利于信号处理，但应用本身仍需正确处理终止。敏感信息应通过安全的构建秘密或运行时凭证机制提供，不能写进镜像层。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Docker 常用管理命令",
+      "content": "docker 常用命令",
+      "answer": "常用命令按用途记忆，以下 myapp:1.0 是示例版本，应替换为已验证镜像：\n\n```bash\ndocker build -t myapp:1.0 .\ndocker pull myapp:1.0\ndocker run -d --name demo -p 8080:8080 myapp:1.0\ndocker ps\ndocker ps -a\ndocker logs --tail 100 demo\ndocker inspect demo\ndocker exec -it demo sh\ndocker stop demo\ndocker rm demo\ndocker image ls\ndocker save -o myapp-1.0.tar myapp:1.0\ndocker load -i myapp-1.0.tar\n```\n\n`exec ... sh` 仅在镜像包含 sh 时可用，slim/distroless 镜像可能没有 Shell，不能固定假设有 /bin/bash。推送要使用实际仓库地址与授权，镜像删除前确认依赖和数据边界；save/load 与容器文件系统 export/import 不同。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 与 Docker 的关系",
+      "content": "K8S 和 Docker 的区别？说一下你的观点 (使用场景等等)",
+      "answer": "Docker 提供镜像构建、分发及 Docker Engine 容器管理等工具，Compose 可声明同机多容器应用。Kubernetes 是跨节点的声明式编排平台，管理调度、副本、发布、服务发现与扩缩容。\n现代 Kubernetes 通过 CRI 使用 containerd、CRI-O 等运行时；1.24 已移除内置 dockershim，Docker Engine 需要 cri-dockerd 等适配层接入。由 Docker 构建的兼容 OCI 镜像仍可在 Kubernetes 上运行，不要求节点安装 Docker Engine。\n单机/开发环境可用 Docker/Compose；有集群编排需求时再评估 Kubernetes，选择依据是可靠性、规模、自动化和维护能力。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Docker 镜像构建、导出与导入",
+      "content": "Docker 镜像如何构建、导出为文件并重新导入？",
+      "answer": "构建镜像：\n\n```bash\ndocker build -t myapp:1.0 .\n```\n\n把已有镜像导出为 tar：\n\n```bash\ndocker save -o myapp-1.0.tar myapp:1.0\n```\n\n重新导入：\n\n```bash\ndocker load -i myapp-1.0.tar\n```\n\n`docker build` 是根据 Dockerfile 构建镜像；`docker save/load` 用于镜像归档。不要与 `docker export/import` 混淆，后者处理容器文件系统快照且不会完整保留镜像历史和元数据。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Dockerfile ARG、ENTRYPOINT 与 CMD",
+      "content": "DockerFILE 中的 ARG 是什么意思，有什么作用？ENTRYPOINT 和 CMD 有什么区别？",
+      "answer": "ARG 定义构建期参数，可通过 `docker build --build-arg VERSION=...` 传入；它不是容器运行期环境变量。多阶段构建应按作用域在需要的 stage 声明/继承，运行时配置用 ENV 等方式。ARG 不适合传密钥，构建秘密使用 BuildKit secret mount。\nCMD 提供默认命令或默认参数，docker run 的位置参数会覆盖它。exec 形式 ENTRYPOINT 指定可执行程序，CMD/run 参数通常追加为参数；`--entrypoint` 可以覆盖入口。\n\n```dockerfile\nENTRYPOINT [\"echo\", \"hello\"]\nCMD [\"world\"]\n```\n默认输出 hello world，传 test 则输出 hello test。shell 形式 ENTRYPOINT 的参数、信号及 PID 1 行为不同，不能套用这个规则；服务进程通常优先 exec 形式。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Docker 容器进程查看",
+      "content": "docker 容器的进程可以怎么查看",
+      "answer": "可以从宿主机直接查看，也可以在容器内执行进程工具：\n\n```bash\ndocker top demo\ndocker exec demo ps aux\ndocker exec -it demo sh\n```\n\n`docker top` 不要求容器镜像内安装 ps，通常更可靠；`docker exec` 需要补全容器名，而且精简镜像可能没有 bash 或 ps。还可用 `docker inspect demo` 查看入口命令、PID 和状态，再结合宿主机的 `nsenter`、`ps` 或监控系统排查。\n\ndemo 是示例容器名，按实际对象替换。",
+      "explanation": "",
+      "categoryId": "bank-category-05",
+      "difficulty": "easy"
+    },
+    {
+      "title": "磁盘空间与 inode 告警排查",
+      "content": "出现磁盘告警你会如何排查",
+      "answer": "先定位告警对应文件系统：`df -h` 看空间，`df -i` 看 inode；检查增长速度、挂载点、只读状态和近期任务。\n限定到该文件系统查目录和大文件，例如：\n\n```bash\ndu -xhd1 /mountpoint\nfind /mountpoint -xdev -type f -size +1G -print\nlsof +L1\n```\n工具选项需按发行版确认。df 高但 du 低时检查已删除但仍打开的文件、挂载覆盖和文件系统开销。\n按业务归档/保留策略清理日志、缓存、临时数据或扩容；优先 logrotate 等标准机制。不要盲删数据库文件或仍在写入的日志，释放开放文件空间通常要让持有进程安全关闭/重开句柄。处理后验证空间和业务。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Windows Server 运维能力说明",
+      "content": "如何如实说明 Windows Server 运维经验与能力？",
+      "answer": "按实际经历说明操作系统版本、服务器用途、权限和本人负责内容；没有生产经验就明确说明实验或基础了解。\n\n可核对的能力包括服务与事件日志、网络/DNS、存储和权限、补丁与重启窗口、备份恢复，以及实际接触的 IIS、Active Directory 或远程管理。可使用 PowerShell、Server Manager 等工具；Server Core 等环境不应假定一定有完整 GUI。\n\n用一个真实问题说明现象、证据、操作、验证与回滚，不要把“会连接远程桌面”扩大成精通全部 Windows 基础设施。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Linux 性能调优方法",
+      "content": "常见的 linux 系统优化有哪些",
+      "answer": "以业务吞吐、延迟和错误率为目标，先测量 CPU、内存、I/O、网络、锁和资源配额，再选择参数。\nCPU 可评估 NUMA、亲和、频率策略和 cgroup throttling；内存关注工作集、换页、OOM、缓存与 dirty writeback；I/O 关注磁盘延迟、队列、文件系统和支持的调度器；网络关注连接复用、队列、带宽和丢包。\nIP 转发和桥接 netfilter 参数用于特定网络功能，不是通用性能开关。关闭 swap、固定旧版 deadline/noop 或关服务，也不保证改善性能。\n每次变更记录基线、假设、参数和回滚，在代表性负载下验证；只保留有证据改善且不破坏正确性的设置。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "新增磁盘与持久化挂载",
+      "content": "如何挂载一个新磁盘",
+      "answer": "先用 `lsblk -f`、`blkid` 和资产记录确认新盘、容量、已有文件系统和数据，避免把已有业务盘当新盘；格式化会销毁目标数据。\n按需要创建分区或 LVM，确认目标为空且有授权后再创建文件系统，例如 `mkfs.xfs /dev/sdX1`（sdX1 是需替换的示例，不要照抄）。\n创建挂载点并挂载验证，使用 blkid 得到 UUID，在 fstab 中按实际文件系统与启动需求配置，例如：\n\n```fstab\nUUID=REPLACE_WITH_UUID /data xfs defaults 0 0\n```\n保存前备份 fstab，执行 systemctl daemon-reload（systemd 环境），检查配置并测试目标挂载，最后验证读写、权限、容量和启动行为。是否使用 nofail 等选项应由该盘对业务的必要性决定。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Linux 启动与挂载故障排查",
+      "content": "Linux 在新增磁盘或修改配置后无法正常启动，如何定位与恢复？",
+      "answer": "优先通过控制台/带外管理查看实际报错，判断停在哪一层：固件与启动设备、GRUB、内核/initramfs、根文件系统或 systemd 服务阶段。\n\n检查启动盘与 UUID、根分区和文件系统状态；修改 /etc/fstab 后启动失败，重点检查不存在的设备、错误 UUID、挂载参数和等待超时。进入救援环境时先识别分区，保留数据与日志，再修正配置。\n\n检查依赖故障、磁盘空间、驱动和 initramfs；引导修复命令必须匹配发行版、BIOS/UEFI 与分区方式，不能照搬另一台机器。文件系统检查应按类型操作，通常需在卸载状态进行，避免在线破坏数据。\n\n恢复后验证挂载、服务、日志和再次重启，并保留可回滚的配置。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "服务器 GPU 与网卡接口",
+      "content": "GPU、网卡一般接在服务器的什么接口？",
+      "answer": "服务器 GPU 和高速网卡常通过 PCIe 连接，但并非全部设备都使用普通 PCIe 插卡：部分 GPU 使用 SXM 等专用模块，网卡也可能为 OCP 或板载形式。\n\n安装前核对主板支持、物理尺寸、PCIe 代际与实际通道数、供电散热、NUMA、固件和驱动。物理 x16 插槽不保证电气链路一定是 x16，可通过厂商资料及 `lspci` 等检查实际设备和链路能力。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Linux 常用命令与 Nginx 日志分析",
+      "content": "常用命令，查询内存，查看磁盘大小，查看 Nginx 日志具体命令，如何用 awk 筛选打印出访问 ip",
+      "answer": "常用命令可按目的记忆：\n\n- 文件与权限：ls、find、stat、chmod、chown、tar；变更前确认目标与权限范围。\n- 文本：rg/grep、awk、sed、sort、uniq；注意编码与日志格式。\n- 进程与服务：ps、top、systemctl、journalctl、kill；先识别进程和影响，优先正常终止。\n- 资源：free、vmstat、iostat、df、du；空间与 inode 分别检查。\n- 网络：ip、ss、curl、dig、tcpdump；从实际发生问题的网络命名空间测试。\n\n在常见 Nginx 日志第一列为客户端地址时，可统计频次：\n\n```bash\nawk '{print $1}' access.log | sort | uniq -c | sort -nr | head -20\n```\n\n必须先核对 log_format；代理后的首列可能是代理 IP，不能未经信任边界校验就把 X-Forwarded-For 当成真实客户端。对大日志限制时间范围或采用集中查询，避免生产上无界扫描。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "easy"
+    },
+    {
+      "title": "RAID 容量、容错与备份",
+      "content": "raid 阵列有哪几种？有什么区别？",
+      "answer": "常见 RAID 的容量和容错需按布局与控制器确认。设每盘有效容量相同为 S：\n\n|级别|典型容量|容错与特点|\n|---|---|---|\n|RAID 0|N×S|条带化，无冗余，一盘故障可丢失整个阵列|\n|RAID 1|典型两盘镜像为 S|数据镜像，传统两盘配置可容忍一盘故障|\n|RAID 5|(N−1)×S|至少 3 盘，可容忍一盘故障，有校验写入与重建开销|\n|RAID 6|(N−2)×S|至少 4 盘，可容忍两盘故障，有双校验开销|\n|RAID 10|传统两两镜像布局为 N/2×S|通常至少 4 盘且偶数，容错取决于故障是否落在同一镜像组|\n\n不同软件/硬件实现可能支持其他布局，不能把某种 RAID 10 的最低盘数推广到所有实现。考虑写入模式、磁盘类型、重建时长、URE 风险和故障域；RAID 不防误删、勒索或整个阵列损坏，必须另做可恢复备份。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "常见 Linux 发行版与运维差异",
+      "content": "Ubuntu 和 centos 以及 kylin 系统的区别点在哪些地方？指令有什么不同",
+      "answer": "Ubuntu 属于 Debian 系发行版，常用 apt 和 dpkg；CentOS Linux 是历史上的 RHEL 兼容发行版，CentOS Linux 8 已在 2021 年停止维护，7 已于 2024-06-30 停止维护。CentOS Stream 是不同的发行模式，需按具体版本核对支持期。\nKylin 必须先说明具体厂商、产品、架构和版本，不同版本的包管理与兼容性有差异，不能只按名称断言用 apt 或 yum。\n排查发行版先读 `/etc/os-release`。通用文件、网络和用户命令大体相通，但包管理、仓库、服务名称和默认防火墙不同；使用 systemd 的发行版可用 systemctl。发行版包通常安装到 /usr 等标准路径，/usr/local 多用于本地管理的软件，不能把两者混为一谈。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "离线文件系统检查与恢复",
+      "content": "如果文件系统损坏了，而硬盘是好的你会如何恢复",
+      "answer": "先确认设备、文件系统类型、错误日志和硬件健康，停止写入并保存可恢复的数据或磁盘镜像；修复文件系统不能代替备份。\n卸载目标文件系统后再处理，根分区通常需进入救援环境：\n\n- ext2/ext3/ext4：使用 e2fsck，先做只读检查，再按评估执行修复。\n- XFS：使用 `xfs_repair -n <设备>` 做不修改检查；按日志状态和官方流程处理，再对未挂载文件系统执行 xfs_repair。`fsck.xfs` 并不进行实际修复。\nXFS 脏日志一般需要按条件重放；`-L` 清除日志可能造成数据损失，只能作为有备份并已评估后的最后手段。修复后挂载并校验数据，必要时从备份恢复。不要重新格式化损坏分区来“恢复”数据。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "hard"
+    },
+    {
+      "title": "CPU 高负载与数据库负载排查",
+      "content": "如果系统经常 CPU 负载很高或者数据库负载很高，你会做什么处理？",
+      "answer": "先建立错误率、响应时间、CPU、load、内存、I/O、连接和近期变更的时间线。Linux load 高可能是 CPU 排队，也可能是不可中断 I/O 等待。\nCPU 问题用 top/pidstat 定位进程和线程，结合应用 profiling、GC、锁竞争、容器 CPU throttling 排查。数据库问题检查慢日志、执行计划、锁等待、连接池、Buffer Pool 和磁盘延迟。\n先优化已证实的 SQL/索引、请求模型和容量问题，必要时限流或回滚。扩容、缓存、读写分离、归档和分片需要评估成本及一致性，不能把调大连接数或分库分表当成通用处理。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "服务器卡顿的分层排查",
+      "content": "如果服务器卡顿了你是如何处理的",
+      "answer": "先确认卡顿的时间、影响范围、近期变更和业务延迟，保留现场，再分层定位：\n\n1. CPU/负载：`top`、`pidstat`、`uptime`；Linux load average 包含可运行和不可中断等待任务，不能直接等同 CPU 使用率。\n2. 内存：`free -h`、`vmstat 1`，关注 available、换页和 OOM/cgroup 限额。\n3. I/O/空间：`iostat -xz 1`、`df -h`、`df -i`，结合磁盘延迟与队列定位进程。\n4. 网络/应用：`ss -s`、接口错误、健康接口、应用线程/连接池、数据库锁和依赖延迟。\n5. 结合 `journalctl`、内核日志和变更时间线确认根因。按预案限流、回滚或扩容，处理后验证业务指标；终止进程前确认负责人、影响和恢复方式。",
+      "explanation": "",
+      "categoryId": "bank-category-06",
+      "difficulty": "medium"
+    },
+    {
+      "title": "常用网络工具与用途",
+      "content": "有哪些常用的网络工具，能介绍一下吗",
+      "answer": "常用网络工具按用途分类：\n\n- 地址和接口：`ip addr`、`ip link`\n- 路由和邻居：`ip route`、`ip route get <ip>`、`ip neigh`\n- 连接和监听：`ss -antup`；netstat 已较旧\n- DNS：`dig`、`nslookup`、`getent hosts`\n- 连通和路径：`ping`、`tracepath`、`traceroute`、`mtr`\n- 端口/协议：`nc`、`curl`、对应数据库客户端\n- 抓包：`tcpdump`、Wireshark\n- 防火墙：`nft`、`iptables`\n\n`ss` 主要查看 socket，不用它查看路由表；路由应使用 `ip route`。排障时按 DNS→路由→TCP→TLS/应用逐层验证。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "easy"
+    },
+    {
+      "title": "同网段 HTTP 访问失败排查",
+      "content": "同一个网段内两台服务器，当 B 服务器 80 端口正常开放且正常时，A 服务器无法访问的原因有那些或解决办法。",
+      "answer": "题目已确认 B 服务器的 80 端口处于监听且服务健康，因此重点排查 A 到 B 的访问路径：\n\n1. 在 A 上确认目标地址、DNS 和路由：`ip route get <B_IP>`。\n2. 测试 TCP 而不只依赖 ping：`nc -vz <B_IP> 80`、`curl -v http://<B_IP>/`。\n3. 在 A、B 两端检查防火墙、安全组、ACL 和策略路由；使用精确允许规则，不要直接停止 firewalld。\n4. 在 B 上确认监听地址：`ss -lntp '( sport = :80 )'`。若只监听 127.0.0.1，远端无法访问；通常应监听实际网卡地址或 `0.0.0.0`。\n5. 两端抓包：`tcpdump -ni any host <peer_ip> and port 80`，判断请求是否到达、响应是否返回。\n6. 检查反向路径、重复 IP、邻居表、交换机 VLAN/端口隔离等二层问题。\n\n不要再把“服务未启动、80 被其他进程占用”列为主要原因，因为这与题目前提冲突。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "iptables 表、链与转发路径",
+      "content": "iptables 的四表五链了解过吗？",
+      "answer": "iptables 是管理 Linux netfilter 规则的工具。常见表包括 filter、nat、mangle、raw，部分系统还有 security；具体 hook 与优先级取决于内核和功能，不能简单认为所有包按固定“表顺序”走一遍。\n\n主要内建链：PREROUTING、INPUT、FORWARD、OUTPUT、POSTROUTING。入站包经 PREROUTING 后按路由判断送本机 INPUT 或转发 FORWARD，再从 POSTROUTING 出站；本机产生的包走 OUTPUT，再经相应路由和 POSTROUTING。\n\nfilter 用于过滤，nat 用于连接的地址转换映射，mangle 用于修改标记等，raw 可影响连接跟踪。NAT 规则通常用于建立连接的首包，后续包依据 conntrack 映射处理，不是每个包都重新匹配同一套 NAT 规则。\n\n先确认是 iptables-legacy 还是 iptables-nft 前端，区分命令语法与底层规则。排障检查路由、规则计数、默认策略、conntrack 和实际命中，变更前备份并保留恢复路径。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "tcpdump 定向抓包",
+      "content": "tcpdump 有用过吗？用来做什么的",
+      "answer": "tcpdump 是命令行抓包工具，可按接口、主机、端口、协议和 TCP 标志过滤流量，用于定位握手失败、重传、RST、DNS、延迟和单向通信等问题。\n\n常见示例：\n\n```bash\ntcpdump -ni any -c 1000 'host 192.0.2.10 and port 443'\ntcpdump -ni eth0 -c 1000 -s 0 -w capture.pcap 'tcp port 443'\n```\n\n抓包应控制过滤条件、时长和文件大小，注意敏感数据与权限，并使用 Wireshark/tshark 分析时间线。Kubernetes 中还要选择正确抓包位置：Pod namespace、veth、节点物理口或隧道口。\n\n“是否用过”请按真实情况回答；未实际使用时可说明理解的过滤语法和实验范围。\n\n192.0.2.10、端口和接口是示例值，应替换并限制范围、时长或数量。加密流量的握手与包特征可以观察，但不能直接据此读取 TLS 内部的 HTTP 明文。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "系统安全加固与验证",
+      "content": "常用加固系统安全方法或方式",
+      "answer": "按业务与系统基线实施加固：及时更新受支持版本，最小权限与账号审计，限制不必要服务与端口，使用密钥/MFA 等认证，保护凭证与备份，配置日志、监控和恢复能力。\n\nSSH 应限制访问来源，核对 root 与密码登录策略、密钥权限与审计。修改后先保持原管理会话，并通过新会话验证和准备控制台恢复，再收紧旧入口。改 SSH 端口主要减少扫描噪声，不能替代认证与访问控制。\n\nSELinux/AppArmor、防火墙和安全策略应按应用需求配置与验证，不应为方便排障长期全部关闭。每次变更记录基线、影响、验证和回滚；是否使用特定安全产品取决于环境需求，不是加固的唯一标准。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "IPv4 子网掩码与地址范围",
+      "content": "IPv4 子网掩码和 CIDR 前缀如何确定网络地址、广播地址与主机范围？",
+      "answer": "子网掩码用连续的高位 1 标记网络部分，CIDR 的 /n 表示网络位数。网络地址由 IP 与掩码按位 AND 得到。\n\n例如 192.168.10.37/24，掩码为 255.255.255.0，网络地址为 192.168.10.0，常规广播地址为 192.168.10.255，常规主机范围为 .1 到 .254。\n\n普通广播子网常用可分配数为 2^(32-n)-2，但 /31 点到点链路和 /32 主机路由等有特殊语义，不能一律减 2。网络划分还需考虑路由、地址冲突和网关，并以实际链路规范为准。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "漏洞发现、修复与复测流程",
+      "content": "发现服务器或应用漏洞后，如何评估、修复并确认风险已经处理？",
+      "answer": "先确认资产、产品版本、暴露面与漏洞证据，区分扫描结果、误报和实际可利用条件；依据影响、暴露与业务重要性排序，不直接在生产执行攻击验证。\n\n采取临时缓解时说明期限与残余风险，随后在受控环境验证补丁、配置或升级方案，检查兼容性、备份与回滚。按变更流程实施并复测，核对版本与实际路径，不只看扫描告警是否消失。\n\n记录影响资产、修复责任、时间线、证据与遗留项；不能修复时采用隔离或其他控制并安排跟踪。个人经历只补充真实使用的工具与案例，不虚构扫描平台或处理数量。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "TCP 连接统计与 TIME_WAIT",
+      "content": "如何查看某个应用或端口建立的网络连接数量？如果出现大量 TIMEWAIT 你会如何排查",
+      "answer": "查看连接时应限定端口或进程，并去除表头后计数，例如：\n\n```bash\nss -antp\nss -Hant state established '( sport = :443 or dport = :443 )'\nss -Hant state established '( sport = :443 or dport = :443 )' | wc -l\nss -Hant state time-wait | wc -l\n```\n\n第三行统计本机与 443 端口相关的 ESTABLISHED TCP socket，第四行统计本机全部 TIME_WAIT socket；同机两端的连接可能计为两个 socket，代理和连接复用也会改变口径，它们不等于用户数或应用会话数。\n\n大量 TIME_WAIT 通常与本机主动关闭的短连接有关，同时关闭时也可能双方都出现 TIME_WAIT；数量本身不能直接判定异常。先确认远端、连接创建速率、四元组分布、端口耗尽和业务错误，再检查大量短连接、未复用连接池、Keep-Alive/上游超时等问题。TIME_WAIT 通常已无可归属的存活进程，不能依赖 `ss -p` 总能查到原进程，应在连接存活时结合进程指标或跟踪工具关联。\n\n`net.ipv4.tcp_fin_timeout` 控制的是孤儿连接在 FIN_WAIT_2 的时间，不会缩短 TIME_WAIT。不要把修改 `tcp_tw_reuse` 当作通用答案；必须结合内核版本、连接方向、压测和回滚计划评估。优先修复连接使用方式。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "SSH 登录失败分层排查",
+      "content": "如果服务器远程登录不了如何排查",
+      "answer": "先保留完整错误并区分：连接超时、Connection refused、认证失败或会话启动失败。\n\n客户端用 `ssh -vvv` 查看协商和认证；确认地址、实际端口、用户名、跳板与代理。超时检查路由、安全组/防火墙和抓包；拒绝连接检查监听服务和端口。\n\n需要服务端操作时使用现有管理会话或控制台，检查 ssh/sshd 服务、配置与 Include 文件、`ss` 监听、journal/认证日志。认证失败核对账号状态、允许的认证方式和密钥，常见 ~/.ssh 目录及私钥/authorized_keys 权限需合适，实际由用户/系统配置决定。\n\n修改前检查配置语法，保留恢复入口并用新会话验证。不要盲目关闭防火墙或 SELinux；服务名与日志路径因发行版而异。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "OSI 七层模型与 TCP/IP",
+      "content": "OSI 七层模型",
+      "answer": "OSI 模型按功能分七层：\n\n|层|主要功能|示例|\n|---|---|---|\n|7 应用|应用协议与服务语义|HTTP、DNS|\n|6 表示|编码、序列化与数据表示|编码/格式转换|\n|5 会话|会话建立与管理|会话控制功能|\n|4 传输|端到端传输与端口|TCP、UDP|\n|3 网络|寻址与路由|IP、路由|\n|2 数据链路|链路帧与邻居交付|Ethernet、交换|\n|1 物理|信号与介质|电信号、光纤|\n\n互联网常用 TCP/IP 模型合并 OSI 的部分高层功能。TLS、RPC 或具体软件可能跨多个功能层，不能把所有真实协议机械地限定到唯一 OSI 层。排障时可借助分层思路，但应检查实际协议栈。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "easy"
+    },
+    {
+      "title": "服务器外网访问失败排查",
+      "content": "服务器访问外网失败，如何分层定位并选择工具？",
+      "answer": "先定义目标域名/IP、端口、协议和完整错误，区分整机、容器、某个用户或某个目标异常。\n\n1. 用 ip addr/route 检查地址与默认路由，用 dig 等检查 DNS，比较域名与 IP 测试结果。\n2. 检查到网关和目标的路径；ping/traceroute 可能被过滤，失败不能单独证明 HTTP/TCP 不可达。\n3. 用 curl 或受控 TCP 测试检查端口、代理、TLS、超时与响应，用 ss 查看连接状态。\n4. 检查主机防火墙、云安全组/ACL、NAT/出口代理、源地址与对端限制；容器问题必须从相同网络命名空间测试。\n5. 用 tcpdump 在相关接口定位握手与返回包，结合网关与对端证据判断阻断位置。\n\n修复最小配置并验证业务，不直接关闭全部安全控制。工具与步骤应围绕具体错误，避免脱离场景堆命令。",
+      "explanation": "",
+      "categoryId": "bank-category-07",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 监控指标与瓶颈识别",
+      "content": "MySQL 有设置什么监控指标吗？遇到过什么瓶颈吗，如何解决的",
+      "answer": "MySQL 监控应覆盖服务、吞吐、延迟、并发、复制、存储和资源：\n\n- 服务：可连接、查询成功率、错误和重启。\n- 吞吐：Questions/Queries、Com_commit/Com_rollback 等计数器按时间差换算速率，明确 QPS/TPS 口径。\n- 并发：Threads_connected、Threads_running、连接池占用与 max_connections 余量；连接数多不等于正在执行的查询多。\n- 查询：慢查询、分位延迟、锁等待、死锁、临时表和扫描情况。\n- InnoDB：缓冲池读请求与物理读、脏页、redo 与刷盘压力；命中率需用采样差值计算。\n- 复制：接收/应用线程、错误、延迟、GTID/位点和副本健康，延迟为 0 不能单独证明数据一致。\n- 主机：CPU、内存、磁盘容量与 I/O 延迟、网络、文件描述符。\n\n组合应用延迟与数据库指标定位瓶颈；阈值按基线和业务 SLO 设置。不要仅因连接数高就增大 max_connections，也不要用累计计数器直接当每秒速率。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 副本追平与 GTID 屏障",
+      "content": "MySQL 如何确定从库已经同步上主库了",
+      "answer": "`SHOW REPLICA STATUS` 的线程状态、错误和延迟可用于初筛，但 Seconds_Behind_Source（旧名 Seconds_Behind_Master）为 0 不能单独证明副本实时完全同步；连接中断、并行复制和采样时刻都影响解释。\n使用 GTID 时，先在源库取得目标时刻的 `@@GLOBAL.gtid_executed`，在副本执行：\n\n```sql\nSELECT WAIT_FOR_EXECUTED_GTID_SET('REPLACE_WITH_TARGET_GTID_SET', 10);\n```\n返回 0 表示该集合已执行，1 表示等待超时，其他失败条件会报错；还要核对复制过滤、通道和数据一致性，GTID 已执行不保证被过滤的行也存在。\n源库继续写入时，这只证明追到指定屏障，不是永久完全同步。严格切换需按方案控制写入；行数或最新时间戳不能替代一致性校验。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "hard"
+    },
+    {
+      "title": "MySQL 管理员密码重置",
+      "content": "忘记 mysql 密码如何修改",
+      "answer": "有权管理服务器时，先确认 MySQL 版本、目标账户 host、认证插件和真实配置路径，按官方密码重置流程进入维护窗口。\nMySQL 8.x 可采用受保护的 init-file 方法：停止正常实例，用仅实例运行用户可读的临时文件保存下面语句，再按原数据目录/配置启动并指定 init-file：\n\n```sql\nALTER USER 'root'@'localhost' IDENTIFIED BY 'REPLACE_WITH_NEW_PASSWORD';\n```\n成功后删除临时文件、去掉 init-file，恢复正常启动并验证权限。\n若使用 skip-grant-tables，应限制本地访问；该模式下先执行 FLUSH PRIVILEGES 后再 ALTER USER，随后恢复正常授权启动。不要直接 UPDATE mysql.user，也不要使用 MySQL 8 已移除的 PASSWORD()。实际账户、服务命令和恢复步骤需按系统核对。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Oracle Database 与 MySQL 的比较",
+      "content": "oracle 和 mysql 的区别",
+      "answer": "Oracle Database 和 MySQL 都是关系型数据库，各自有不同版本、许可、工具及高可用体系。MySQL 有开源社区版及商业产品，不能把所有部署一概归为无成本。\n比较应明确实际版本/版本档次、SQL 方言、事务与隔离、存储、执行计划、备份恢复、高可用、支持与许可条件。MySQL 现代版本也支持窗口函数、CTE 等功能，不能简单写成“功能简单，只适合中小型”。\n性能和运维难度取决于 schema、数据量、SQL、资源和团队能力。通过代表性负载测试及恢复演练，再评估迁移兼容、授权和总成本，不靠数据库品牌直接推断结果。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 会话数与 TCP 连接数",
+      "content": "不进入交互式 SQL 会话时，如何检查 MySQL 会话数量？TCP 连接数量是否相同？",
+      "answer": "不进入交互式客户端仍可使用受授权的 MySQL 工具/API，例如 `mysqladmin status` 或 `mysqladmin extended-status` 查看 Threads_connected 等指标；它们仍需要正常身份认证和网络权限，不等于无需数据库账号。\n\n也可用 `mysql -e` 执行受授权的状态查询，或通过监控系统获取数据。不要把密码直接写入会泄露的命令行或日志。\n\n`ss` 可统计监听端口的 TCP 连接，但 TCP 数量不等于数据库会话数量：Unix socket、代理、多后端、连接状态与采样时刻都会影响结果。还要区分已连接会话与正在执行的 Threads_running。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 主库故障转移与防双写",
+      "content": "你们 mysql 主库挂了怎么办",
+      "answer": "先确认真实架构：单机、传统异步/半同步复制、Group Replication/InnoDB Cluster 或托管数据库的处理机制不同，不能使用 Redis Sentinel 处理 MySQL。\n\n1. 检查主机、mysqld、磁盘、网络与代理，判断是故障还是分区，避免误切换。\n2. 在新主允许写入之前，确认旧主无法再接受写入并落实 fencing，例如高可用系统隔离、移除入口或阻断写路径。仅以“探测不到旧主”作为依据不够；无法证明隔离时不得贸然形成双主。\n3. 按 GTID/位点、已提交事务、relay log 执行情况、候选健康及高可用机制选择候选。异步复制可能丢失源库尚未复制的事务；GTID 分叉不能简单自动合并，半同步也不是无条件零丢失。\n4. 按预案提升新主并切换代理或连接端点，处理连接池、DNS和重试，验证读写、复制及关键业务。\n5. 恢复旧主后先处理差异，以新主为基准安全重建为副本；不得直接恢复旧主写服务。评估能否安全抢救未复制事务，必要时人工一致性处理。\n6. 记录实际 RPO/RTO，复盘检测、选主、隔离、恢复和演练。\n\n单机无副本时通常依赖备份和 binlog 恢复；多数派方案需按其协议和故障状态操作。托管数据库由平台执行底层切换，应用侧关注端点、重试和验证。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "hard"
+    },
+    {
+      "title": "数据库版本化迁移与兼容发布",
+      "content": "版本更新的时候数据库需不需要变更，你们是怎么实现的",
+      "answer": "版本更新涉及数据库 Schema 时，不应把数据库理解为随应用节点“逐台更新”。建议使用版本化迁移和 expand-and-contract：\n\n1. 备份并验证恢复，评估锁表、数据量、复制延迟和执行时间。\n2. Expand：先增加兼容字段、表或索引，保持旧版本仍可运行；必要时双写或异步回填。\n3. 部署兼容新旧 Schema 的应用，灰度验证后逐步切流。\n4. Contract：确认旧版本不再使用旧结构后，再清理旧字段和兼容逻辑。\n5. 迁移脚本要可审计、幂等或可判断状态；应用回滚和数据回滚应分别设计。\n\n生产执行前应在等规模环境预演，并明确负责人、监控指标和停止条件。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Oracle 运维接触范围与能力边界",
+      "content": "如何说明 Oracle 运维经验以及工具和权限边界？",
+      "answer": "只陈述真实使用的 Oracle 版本、业务环境、职责和权限，例如账号/表空间、备份恢复、实例与 SQL 监控、复制或高可用，未操作的能力明确说明。\n\n介绍一个真实问题：现象 → 日志和指标 → 定位 → 受控操作 → 验证/回滚。没有生产经验时可以说明实验和概念理解，不应直接背成已经维护过 Oracle 集群。\n\nAWR、ASH 等功能的许可要求需按产品与使用方式核对，可能涉及 Diagnostics Pack；有工具名称不等于默认可以免费启用全部诊断功能。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 双主复制与写冲突",
+      "content": "mysql 双主需要注意什么",
+      "answer": "先区分异步互相复制的双主与 Group Replication 多主。普通异步双主没有通用的“按时间戳/节点优先级自动解冲突”机制，同时写相同行可能导致复制错误或数据分叉。\n通常限制应用只写一个主节点，切换时先隔离旧主。GTID、循环复制处理、自增步长/偏移、DDL 和唯一约束都要正确设计；自增错开只能缓解部分主键碰撞，不能解决同一行更新、其他唯一键和业务冲突。\n监控复制位点、延迟、错误与数据一致性，预演故障切换和重建。若用 MGR 多主，应理解事务认证、限制与冲突回滚，客户端必须能处理失败重试。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "hard"
+    },
+    {
+      "title": "MySQL 复制监控与副本故障恢复",
+      "content": "MySQL 复制应监控什么？副本复制报错或延迟时如何恢复？",
+      "answer": "监控接收/应用线程状态、错误、复制延迟、GTID/位点、relay log 和资源；结合 Performance Schema 与 `SHOW REPLICA STATUS` 判断是否有积压、阻塞或数据不一致。\n\n发生故障先区分网络/认证/源库 binlog 保留不足、磁盘与 I/O、锁等待、复制过滤或数据冲突。保留错误与位点证据，修复原因后按预案恢复复制。\n\n不能为消除告警盲目跳过事务，这可能留下永久数据缺口。源日志缺失或一致性无法证明时，使用可信备份/克隆与正确位点重建副本，再验证数据和复制状态。\n\n副本故障与主库故障转移是不同流程：后者还需要旧主隔离、候选选择和切流。延迟为 0 与线程 Running 不单独证明数据完整，必要时使用指定 GTID 屏障与一致性校验。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "hard"
+    },
+    {
+      "title": "SQL JOIN 与外连接过滤",
+      "content": "连表查询会吗",
+      "answer": "常见连表查询有 INNER JOIN、LEFT JOIN 和 RIGHT JOIN：\n\n```sql\nSELECT a.id, b.a_id\nFROM table_a AS a\nINNER JOIN table_b AS b ON a.id = b.a_id;\n\nSELECT a.id, b.a_id\nFROM table_a AS a\nLEFT JOIN table_b AS b ON a.id = b.a_id;\n```\nINNER JOIN 只返回匹配行；LEFT JOIN 保留左表全部行，未匹配的右表字段为 NULL。过滤条件放在 ON 还是 WHERE 会影响外连接语义。\nMySQL 不支持原生 FULL OUTER JOIN，需要根据业务用 LEFT JOIN 加右侧未匹配行的 UNION ALL 等方式模拟，并正确处理重复行与 NULL。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "easy"
+    },
+    {
+      "title": "MySQL 与 Redis 的架构分工",
+      "content": "MySQL 集群是怎么样的，Redis 用来做了什么",
+      "answer": "MySQL 常见部署包括单写主库加副本，以及 InnoDB Cluster/Group Replication。异步复制存在延迟；读写分离要考虑读后写一致性。\nGroup Replication 有单主和多主模式，生产选型需考虑多数派、事务认证、网络及故障域。组内选主不等于应用自动换连接，通常还需 Router、代理或应用重连。异步双主不天然解决写冲突，也不能直接保证写吞吐翻倍。\nRedis 可用于缓存、共享会话、原子计数、Streams 队列等。缓存需设计失效与一致性；锁需唯一标识、原子释放、租期和 fencing 等措施；持久化/副本不等于绝对不丢数据。具体“用来做了什么”应结合本人实际架构。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL binlog 与复制执行链路",
+      "content": "MySQL 主从复制的原理",
+      "answer": "传统 MySQL 复制主要依赖源库 binlog 与副本 relay log：\n\n1. 源库在配置允许时把相应事务变化记入 binlog；binlog 与 InnoDB redo log 不是同一机制。\n2. 副本 receiver/I/O 线程连接源库，接收 binlog 并写入 relay log。\n3. applier 执行 relay log 中的事件；现代配置可由 coordinator 与多个 worker 并行应用，并非永远只有一个 SQL 线程顺序执行。\n4. relay log 根据轮换、执行位置和 relay_log_purge 等条件回收，不是每条 SQL 一执行完就立即删除对应文件内容。\n\nROW 与 STATEMENT 等格式记录内容不同，GTID 帮助跟踪事务。异步复制存在延迟和故障丢失风险；半同步确认与应用完成、严格数据一致性是不同条件。监控线程、错误、位点与实际一致性，并验证备份恢复。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 慢 SQL 与资源瓶颈排查",
+      "content": "如果数据库出现执行 SQL 慢、如何排查这个瓶颈在哪",
+      "answer": "先区分耗时发生在应用排队、网络、连接池还是数据库执行，再结合慢日志、Performance Schema、锁等待和主机指标定位。\n\n1. 取得代表性 SQL、参数、执行次数、延迟和数据规模，避免只优化偶发的一次采样。\n2. 用 EXPLAIN 检查访问路径、连接顺序、扫描量、估计行数与索引；EXPLAIN ANALYZE 会实际执行语句，要在受控环境评估负载与副作用。\n3. 检查谓词、函数/隐式转换、索引顺序、分页、排序与临时表，也检查锁、事务长度、I/O和统计信息。全表扫描不必然错误，添加索引有写入与空间成本。\n4. 在代表性数据上验证优化结果与正确性，必要时限流、终止受控异常查询或回退变更。\n5. 建立基线、监控和复盘；个人案例按真实证据说明，不编造“发现缺索引后速度提升多少”的经历。\n\n数据库整体瓶颈还需看 CPU、内存、I/O、连接和复制；SQL 计划只是证据之一，不应把所有慢查询都归因于缺索引。",
+      "explanation": "",
+      "categoryId": "bank-category-08",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Redis 执行模型与持久化",
+      "content": "Redis 的工作原理",
+      "answer": "Redis 核心命令执行通常以串行为基础，结合事件循环和 I/O 多路复用处理客户端，因此应避免慢命令/大键阻塞主执行路径。但现代 Redis 还可能使用 I/O 线程、后台任务和 fork 子进程，不能说整个服务永远只有一个线程。\n它提供字符串、哈希、列表、集合、有序集合等内存数据结构。RDB 是快照，AOF 记录写入；持久化策略、fsync、复制延迟和故障类型共同决定可能丢失的窗口，开启持久化不等于零数据损失。\nCluster 利用哈希槽分片，主副本通过异步复制协作。性能来自数据结构、内存访问和网络/执行模型，也受负载与配置影响。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kafka 集群与 KRaft 架构",
+      "content": "kafka 集群包含什么组件、集群架构是怎么样的",
+      "answer": "Kafka 服务端包括 broker（保存分区日志、处理请求）和 KRaft controller quorum（管理集群元数据与选举）。Kafka 4.0+ 已移除 ZooKeeper 模式；历史 3.x/更早版本需按部署模式单独说明。\nTopic 分为 Partition，每个分区有一个 leader 和若干 follower 副本，副本分布在 broker 上。controller leader 与分区 leader 是不同概念，不存在全局唯一“Leader Broker”负责所有消息。\nproducer/consumer 是客户端，使用分区、消费组、offset 和协调器等机制生产和消费，不是必须和 broker 同机部署的服务端组件。\n分区故障转移需要合格副本与正确 ISR/选举配置；可靠性还取决于副本、acks、min.insync.replicas 和是否允许不干净选举。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kafka 与 RabbitMQ 的区别",
+      "content": "kafka 和 rabbitmq 的区别",
+      "answer": "Kafka 以 Topic/Partition 的追加日志为核心，消息按保留策略保存，消费者以 offset 跟踪进度，适合重放、流处理和事件日志。\nRabbitMQ 以交换机/队列和路由为核心，适合任务分发及灵活消息路由，也提供 quorum queues 和 streams 等能力，不能只概括为内存队列。\nKafka 的可靠性取决于副本数、ISR、acks、min.insync.replicas 等配置，并非每条消息默认都已写到多个副本。RabbitMQ 要按队列类型设计持久性，结合发布确认、消费确认、复制和重试。\n吞吐、延迟和成本取决于消息大小、批处理、确认方式、持久化与硬件；两者都需处理重试/重复，不能只凭产品名保证“更快”或“绝不丢失”。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "etcd 单成员与集群引导",
+      "content": "单主的 etcd 是如何被启用的？如何去定义编排",
+      "answer": "如果只有一个 etcd 进程，应称单成员集群；etcd 多成员集群本来就通过 Raft 选举一个 leader。“单成员”和“单 leader”是两个概念。\n单成员启动需明确 name、data-dir、client/peer 监听与对外通告地址、initial-cluster/token/state，并按环境配置 TLS、认证和持久化。不能用任意公网 HTTP 监听示例充当生产方案。\nkubeadm 的堆叠 etcd 通常由 kubelet 运行静态 Pod；独立业务 etcd 可以用受维护的部署方案或 StatefulSet 配合持久卷，但必须处理成员身份和集群引导，不能仅写一个裸 Pod YAML。\n单成员没有成员故障容错，生产高可用常采用 3 或 5 个投票成员，跨故障域部署，并验证快照及恢复。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "hard"
+    },
+    {
+      "title": "Redis 节点故障与命中率监控",
+      "content": "redis 集群出现异常节点怎么处理，有没有监控命中率",
+      "answer": "先看 `CLUSTER INFO`、`CLUSTER NODES`、槽覆盖、复制偏移、节点日志、资源和集群总线连通性。\nRedis Cluster 使用 PFAIL/FAIL 故障状态，Sentinel 使用 SDOWN/ODOWN，二者不要混写。确认是网络分区、超时、资源问题还是进程退出后再处理。\n满足多数派和副本资格时，Cluster 可提升 replica 接管槽。没有完整可用副本时，添加一个空副本或把槽指向其他节点不能找回已丢失数据，应先恢复原节点或一致性备份，明确损失范围再操作。\n命中率可对 `INFO stats` 的 keyspace_hits/misses 做采样差分，或计算监控窗口内 rate 的比例；分母为 0 时单独处理。累计比例会掩盖近期变化，还要结合延迟、淘汰与业务缓存语义。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Redis Sentinel 与 Cluster",
+      "content": "Redis 切片集群跟 Redis 普通的主从哨兵架构有什么区别",
+      "answer": "Sentinel 主要为一个或多个独立主副本组提供监控和故障转移，本身不存业务数据。每个组的主副本复制该组数据，读副本需处理异步延迟。\nRedis Cluster 用 16384 个哈希槽分片到多个 master，replica 复制其所属分片，可通过增主节点并迁移槽扩展容量和写入。跨槽多键操作有约束，客户端需支持 Cluster 协议。\nSentinel 故障转移由哨兵协商和授权；Cluster 由集群节点自身完成故障检测和副本选举。副本提升通常接管原 master 的槽，不等于把这些槽重新均匀分配给所有 master；重新分片是单独操作。两者都需评估异步复制带来的数据丢失窗口。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "etcd 性能与健康监控",
+      "content": "etcd 如何去监控它的性能",
+      "answer": "etcd 自带 Prometheus 格式的 `/metrics`，可在客户端监听地址或配置的 listen-metrics-urls 上抓取，不必为原生指标再部署一个 exporter；按监听配置提供 TLS/客户端证书和访问控制。\n关注 leader 是否存在、选主变化、失败/待处理 proposals、WAL fsync 与 backend commit 延迟、数据库大小/配额、磁盘空间、peer 网络延迟和资源饱和。\n使用带正确 endpoints、CA、证书和密钥的 `etcdctl endpoint health`、`endpoint status --write-out=table`、`member list` 辅助排查。监控各成员与多数派可用性，阈值结合基线设置，并验证快照和恢复流程。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Redis Cluster 建立与故障切换",
+      "content": "Redis 怎么做集群呢，主节点坏了如何切换呢？",
+      "answer": "Redis Cluster 将键分布到 16384 个哈希槽，由多个 master 分担数据，每个 master 可配置 replica。常见起步拓扑是 3 主 3 副本，并把主副本放到不同故障域。\n配置 cluster-enabled、节点地址、认证、持久化及客户端/集群总线连通性后，用 `redis-cli --cluster create <节点1:端口> ... <节点6:端口> --cluster-replicas 1` 创建；客户端需支持 Cluster 重定向。\n节点超时先出现 PFAIL，满足集群的故障报告条件后标记 FAIL。具备资格的 replica 请求具有投票资格的 master 授权，取得多数派后提升并接管原 master 的槽。这是 Redis Cluster 自身的选举协议，不是 Raft，也不依赖 Sentinel。\n复制是异步的，故障切换可能丢失尚未复制的写入；没有可用副本或多数派时不能保证自动恢复。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Redis 内存突增排查",
+      "content": "redis 从 2g 飙升到 7g 的话从业务上面你会如何排查",
+      "answer": "先确认 2G/7G 指 `used_memory`、`used_memory_rss` 还是容器/主机统计，不能直接归因于缓存数据。\n\n1. 对比 `INFO memory`、`INFO keyspace`、`INFO clients` 和持久化状态的时间线，检查内存碎片、客户端/复制缓冲以及 RDB/AOF rewrite 的 fork 写时复制峰值。\n2. 对照业务流量、发布、缓存键前缀、键数量、TTL 分布和写入速率，找出过期策略失效或无限增长的数据结构。\n3. 在可控负载下使用 SCAN、`MEMORY USAGE` 和 `redis-cli --bigkeys` 等；bigkeys 侧重结构大小，不能把所有类型的结果都当成精确字节排名，避免在线全量 KEYS。\n4. 核对 maxmemory、淘汰策略、热键/大键及缓冲限制。确认根因后修复写入和过期逻辑，再验证内存走势。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "hard"
+    },
+    {
+      "title": "奇数成员与多数派容错",
+      "content": "(各类中间件) 集群相关的资源，你认为是推荐奇数个还是偶数个呢，为什么？",
+      "answer": "不能笼统地说所有中间件都必须部署奇数个节点。奇数成员的收益主要适用于依赖多数派投票的成员集群，例如 etcd、ZooKeeper、Raft Controller Quorum 等。\n\n投票集群通常可容忍 `floor((n-1)/2)` 个成员故障。3 个成员可容忍 1 个，4 个成员通常仍只能容忍 1 个，因此第 4 个投票成员增加成本却不增加容错数；5 个可容忍 2 个。\n\n但 Kafka Broker、Redis 数据分片、普通工作节点或无投票语义的副本数量，应根据副本因子、容量、分区、故障域和读写模型设计，不能直接套用“奇数原则”。奇数节点也只是形成多数派的条件之一，并不能单独避免脑裂。",
+      "explanation": "",
+      "categoryId": "bank-category-09",
+      "difficulty": "hard"
+    },
+    {
+      "title": "日志采集方案的选型与取舍",
+      "content": "如何根据日志量、查询需求、团队能力和成本选择日志平台？",
+      "answer": "先明确每日写入量、峰值、保留期、查询频率、全文检索需求、敏感数据、可用性目标和团队维护能力，再做容量与成本评估。不能仅凭“公司大小”指定方案。\n\n- Elasticsearch + Kibana：适合结构化字段和全文检索，但要管理分片、索引生命周期、存储和集群资源。\n- Loki + Grafana：主要索引标签，适合按服务、环境和时间定位日志；标签高基数或宽范围全文扫描可能增加成本。\n- 托管日志服务：减少底层集群运维，需核对费用、网络出口、保留策略、访问权限与数据合规要求。\n- 小规模环境可先使用应用日志轮转和轻量集中采集，但必须解决检索、备份、权限与磁盘上限。\n\n采集器可选 Fluent Bit、Fluentd、Elastic Agent/Filebeat 或 Grafana Alloy，按后端、插件和维护状态选择。不要把采集器、存储与查询界面当作同一个组件。上线前测试多行日志、丢失/重复、缓冲重试和故障恢复。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Loki 标签索引与查询局限",
+      "content": "简述 Loki 的核心设计原理，并说明它在日志收集场景中的主要局限。",
+      "answer": "Loki 主要索引标签来定位日志流，将日志内容压缩存为 chunk；查询先用标签和时间范围选流，再过滤/解析日志内容，LogQL 还支持日志派生指标与聚合。\n局限是宽时间范围、弱选择性标签及大量全文扫描可能昂贵；高基数标签会增加索引/流的负担。需设计标签、保留、存储、查询并发和限额。\n与全文索引后端相比，它采用不同的存储/检索取舍，不是“不支持聚合”，也不能保证标签命中时所有查询都快或整体一定更便宜。",
+      "explanation": "区分标签索引、原文检索和查询时聚合。查询速度与成本由筛选范围、数据规模、schema 和部署资源决定，避免简单背成“ELK 强、Loki 弱”。",
+      "categoryId": "bank-category-10",
+      "difficulty": "medium"
+    },
+    {
+      "title": "ELK、EFK 与日志采集器的区别",
+      "content": "ELK 和 EFK 分别包含什么？Filebeat、Fluentd 和 Fluent Bit 在其中承担什么角色？",
+      "answer": "ELK 通常指 Elasticsearch、Logstash、Kibana；EFK 通常指 Elasticsearch、Fluentd、Kibana。Fluent Bit 是另一种常用的轻量采集器，不能把字母 F 固定解释为 Filebeat。\n\nElasticsearch 存储与检索，Kibana 查询与展示；Logstash、Fluentd、Fluent Bit、Filebeat 等用于不同的采集和处理链路。常见链路包括：\n\n- Filebeat → Logstash → Elasticsearch → Kibana。\n- Fluent Bit/Fluentd → Elasticsearch → Kibana。\n- 采集器直接输出到 Elasticsearch，省去不需要的处理中间层。\n\nLogstash 插件和复杂处理能力较丰富，资源开销需压测；Fluent Bit 通常更轻量，Fluentd 的插件与聚合能力较丰富。性能取决于过滤、缓冲和流量，不能断言 EFK 必然比 ELK 更快。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Elasticsearch 角色与分片架构",
+      "content": "ES 有做什么架构上的设计吗",
+      "answer": "Elasticsearch 节点可同时具有多个角色。master-eligible 负责参与选主，当前 master 管理集群状态、索引元数据及分片分配；只有专用 master 节点才不承担 data 角色的数据存储，不能说所有 master 都不存数据。\ndata 节点保存分片并处理读写，ingest 节点可执行预处理流水线。所有节点都能协调收到的请求；将 node.roles 设为空可部署专用 coordinating-only 节点，但仍需足够资源。\n索引由主分片与副本构成，副本分散到不同节点/故障域。角色拆分、分片数量与冷热分层应按工作负载、容量和恢复需求设计，不是所有小集群都需专用角色节点。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Elasticsearch 选主与投票配置",
+      "content": "ES 的 Master 是怎么选举出来的？",
+      "answer": "Elasticsearch 在具备选主资格的节点间进行选举，要求当前投票配置的多数派可用，以选出唯一的 master 并提交集群状态；不能按所有 data 节点数量直接算票。\n7+ 使用新的集群协调机制，并自动维护投票配置，不再设置 `discovery.zen.minimum_master_nodes`。历史 6.x 的 Zen Discovery 与配置只应作为旧版本知识说明。\n`cluster.initial_master_nodes` 仅用于首次引导一个全新集群，成功引导后移除，不能在正常重启/加入已有集群时重新设置来“恢复选主”。规划节点与故障域时同时考虑投票多数派和数据副本可用性。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "hard"
+    },
+    {
+      "title": "容器日志与集中日志查询",
+      "content": "开发查看日志的方式",
+      "answer": "临时查看 Kubernetes 容器日志：\n\n```bash\nkubectl logs -n default demo-pod -c app --tail=100\nkubectl logs -n default demo-pod -c app --previous\nkubectl logs -n default demo-pod -c app -f\n```\n集中日志可通过 Kibana 查询 Elasticsearch，或在 Grafana 中查询 Loki/Elasticsearch 等日志数据源；Prometheus 主要存储指标，不负责保存容器日志原文。\n主机文件日志可用 `tail -F /path/to/log`。应用最好输出带时间、级别和 request/trace ID 的结构化日志。查询按最小权限授权，注意容器日志轮转和保留期限，kubectl logs 不能代替长期归档。\n\ndefault、demo-pod 和 app 是示例 Namespace、Pod 与容器名，应先查询实际对象再替换。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes stdout 日志采集",
+      "content": "K8S 的 pod 日志怎么收集有了解过吗 (如何从 stdout 中拿到)",
+      "answer": "容器运行时把 stdout/stderr 写入节点上的容器日志文件，kubelet 为 `kubectl logs` 提供访问；CRI 格式和路径按运行时/节点配置确认。\n\n1. 节点级采集：以 DaemonSet 部署 Fluent Bit、Fluentd、Filebeat/Elastic Agent 或 Grafana Alloy 等，读取容器日志，添加 Kubernetes 元数据并处理多行、轮转、缓冲和重试。\n2. 后端：写入 Elasticsearch 并用 Kibana 查询，或写入 Loki 并用 Grafana 查询；采集端、存储和查询工具分别说明。\n3. 临时排障：`kubectl logs -n <namespace> <pod> -c <container> --tail=100`；上一次容器实例加 `--previous`，实时追踪加 `-f`。\nPromtail 已于 2026-03-02 结束维护，新部署应选择仍受支持的采集方案，已有部署按官方迁移流程升级。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "medium"
+    },
+    {
+      "title": "ELK、EFK 部署与日志可靠性",
+      "content": "elk 或 efk 怎么部署的",
+      "answer": "ELK = Elasticsearch + Logstash + Kibana；EFK 通常 = Elasticsearch + Fluentd + Kibana，也常用 Fluent Bit 采集。\n部署时规划 Elasticsearch 角色、副本、磁盘和故障域，配置认证/TLS；Kibana 连接受保护的 Elasticsearch。\nKubernetes 日志采集常用 DaemonSet 读取节点容器日志，配置 CRI/JSON 和多行解析、Kubernetes 元数据、过滤、缓冲、重试和背压；输出到 Elasticsearch 或经中间处理层。\n配置索引模板、生命周期/保留策略和 Kibana data view，验证丢日志、重复日志、时区和查询权限。使用 Filebeat 的方案请明确组件名，而不是把 EFK 的 F 直接解释成 Filebeat。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Elasticsearch 节点故障容忍条件",
+      "content": "Elasticsearch 要容忍一台或两台节点故障，需要哪些条件？",
+      "answer": "容错要同时满足控制面投票、分片副本、故障域、入口与剩余容量，不能只数总节点数。\n\n|目标|投票层典型配置|每个分片的数据副本条件|\n|---|---|---|\n|容忍任意一台相关节点故障|至少 3 个合适的投票成员，故障后保留多数派|至少两份有效副本并正确分布|\n|容忍任意两台相关节点故障|至少 5 个合适的投票成员，故障后保留多数派|至少三份有效副本并正确分布|\n\n“有效副本”要求分配成功、同步状态和放置满足目标，不能仅把 number_of_replicas 设大而实际 unassigned。还需避免同一故障域失去全部拷贝，配置客户端多入口与超时重试，确保故障后资源和磁盘仍可运行。\n\nElasticsearch 7+ 使用自动管理的投票配置，不应用旧 Zen minimum_master_nodes 公式；初始引导参数只用于适用的首次建群。剩余数据可读、还能写入与集群有主是不同条件，需要按实际故障进行演练。",
+      "explanation": "",
+      "categoryId": "bank-category-10",
+      "difficulty": "hard"
+    },
+    {
+      "title": "OpenTelemetry Collector 部署模式",
+      "content": "OpenTelemetry Collector 支持哪两种主要部署模式？",
+      "answer": "Collector 常见两种部署模式：\n\n- Agent：靠近应用部署，例如 DaemonSet 或 sidecar，接收或采集本机信号并处理、转发。\n- Gateway：以集中服务接收多个 Agent/SDK 的数据，统一批处理、过滤、采样与导出。\n\n可以组合两种模式，但要明确每条流水线的数据来源，避免重复采集、重复导出。为接收器、处理器、导出器配置内存限制、批处理、超时、重试和队列，并监控丢弃量、队列与导出失败。\n\n不能认为所有处理器都无状态、可以随意负载均衡；tail sampling 等依赖同一 Trace 的数据汇聚，持久队列和文件位点也需要相应存储与调度设计。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "easy"
+    },
+    {
+      "title": "OpenTelemetry 语义约定",
+      "content": "OpenTelemetry 语义约定（Semantic Conventions）的主要目的是什么？",
+      "answer": "统一不同语言和框架的遥测数据命名规范，确保跨系统数据的可互操作性和一致性。",
+      "explanation": "语义约定统一遥测资源、属性与信号定义，使用时应核对约定版本和稳定性。现代 HTTP 约定使用 http.request.method、http.response.status_code，数据库约定可使用 db.query.text 等；http.method/http.status_code/db.statement 属于旧约定，迁移时应核对埋点库支持并评估敏感查询内容脱敏，不能混写成所有版本必需的名称。",
+      "categoryId": "bank-category-11",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Trace 与 Span 的关系",
+      "content": "在 OpenTelemetry 中，Span 的主要作用是什么？",
+      "answer": "Trace 描述一次分布式操作，由多个 Span 关联起来。Span 表示一个有开始、结束时间的操作，通常有 trace ID、span ID、父 Span ID，并包含名称、属性、事件和状态。\n\n例如 HTTP 入口创建服务端 Span，调用数据库和下游服务创建子 Span；跨进程传播上下文后，可以关联调用链、延迟与错误。\n\n父子关系形成主要调用结构，Span Link 还可关联其他执行或 Trace，适合异步、批处理等场景，不能把全部关联都限定成严格的一棵树。不同机器的时钟、采样与上下文传播错误都会影响观测结果。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "easy"
+    },
+    {
+      "title": "OpenTelemetry 架构与 Collector 流水线",
+      "content": "OpenTelemetry 的主要组成是什么？Collector 流水线如何组织？",
+      "answer": "OpenTelemetry 通过 API、SDK、自动/手工插桩、协议和工具生成、采集、处理并导出指标、日志和追踪；它通常不负责长期存储与查询。\n\nCollector 的典型流水线是 Receiver → Processor → Exporter：接收数据，进行批处理、过滤或采样，再写入后端。一个 Collector 可配置多条 metrics/logs/traces 流水线。\n\nExtensions 提供健康检查、认证等辅助能力；Connectors 可连接流水线或进行信号转换。部署 Agent、Gateway 或组合模式应按流量、故障恢复和处理器状态来设计，不能把“三个流水线组件”当作 OpenTelemetry 全部架构。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "easy"
+    },
+    {
+      "title": "OpenTelemetry 与 Prometheus 的分工",
+      "content": "OpenTelemetry 与 Prometheus 在监控数据采集上的主要区别是什么？",
+      "answer": "OpenTelemetry 是厂商中立的观测框架/工具集，提供埋点、API/SDK、语义约定与 Collector，处理 traces、metrics、logs，通常把数据送到后端，并非长期存储和查询系统本身。\nPrometheus 聚焦指标抓取、时序存储、PromQL 和规则计算，常用 pull；也可输出 remote_write，并按配置接收 remote_write/OTLP metrics。\n两者可组合：应用用 OTel 生成指标，经 Collector 或 OTLP 接到 Prometheus，链路和日志发送到各自后端。",
+      "explanation": "比较的是观测数据生成/处理层和指标监控后端，不能只记为“OTel 采多种数据，Prometheus 永远仅能拉取”。实际接收能力和协议需按版本开启。",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Zabbix 架构、采集与告警",
+      "content": "zabbix 的原理吧，除了 zabbix 还用过什么监控软件吗",
+      "answer": "Zabbix Server 负责监控调度、处理、触发器和告警；数据库保存配置与历史，Web 前端提供管理和展示，Proxy 可在远端汇聚并缓冲数据。\n\nAgent 被动检查由 Server/Proxy 发起查询；主动检查由 Agent 获取检查列表后主动采集并发送结果。另可使用 SNMP、HTTP、IPMI、外部检查等方式，按资产和支持能力配置。\n\n通过模板定义 items 与发现规则，由 triggers 判断条件，actions 关联通知和自动动作。设计保留期、采集频率、超时和 Proxy 容量；验证告警恢复、升级、权限和误报。具体能力依版本与插件，不应把 Agent 的主动检查误解为 Server 主动推送全部指标。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Prometheus 与 Zabbix 的选择",
+      "content": "你觉得 prometheus 跟 zabbix 有什么区别，你会怎么选择",
+      "answer": "Zabbix 提供主机、网络设备、应用等综合监控，支持 agent 主动/被动检查、SNMP 等，并集成界面和告警。Prometheus 聚焦指标时序、标签、PromQL 和规则，常用 HTTP pull 与动态服务发现，告警通知通常交给 Alertmanager。\nPrometheus 自带查询界面，也常配 Grafana；支持 remote_write 输出，并可按版本/配置开启 remote_write 或 OTLP metrics 接收，不能说只能 pull。\n选型按对象、采集协议、动态规模、查询、告警和维护能力决定，Zabbix 也能监控容器，Prometheus 也能监控传统主机。两者可以互补，不是只能按“传统 IT/云原生”二选一。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "应用假死的监测与处理",
+      "content": "假设需要监控的应用处于假死状态应该怎样监控到呢？",
+      "answer": "应用卡死应从业务健康接口、真实请求成功率和延迟确认，再检查线程/协程栈、锁等待、GC、连接池、依赖超时、CPU 和 I/O。CPU 低或日志停止都不是充分证据。\nreadiness 失败会将端点标记为未就绪，普通 Service 通常停止向其转发新流量；liveness 连续失败达到阈值后触发容器重启；startup 为慢启动阶段留出窗口。它们不保证所有现有连接立即断开，也不等于重建整个 Pod。\n先保留必要的诊断信息，再按预案摘流、重启或回滚。避免把外部依赖故障直接绑定到 liveness，造成全体容器重启风暴。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "突增流量的定位与止损",
+      "content": "如果流量突然增高你会如何去定位应用，实时流量监控的命令用过吗",
+      "answer": "流量突然升高时，先确认是带宽、包速率、连接数还是应用 QPS 上升：\n\n1. 节点/进程：`sar -n DEV 1`、`ip -s link`、`ss -s`；iftop/nethogs 可辅助查看实时流量，但生产使用要注意权限和开销。\n2. 入口：查看负载均衡、Ingress/Nginx 的 QPS、状态码、延迟、URI、来源和连接数。\n3. 应用：结合 Prometheus/APM 查看实例、接口、错误率、线程池、连接池和依赖延迟。\n4. 网络：必要时使用 `tcpdump` 限定接口、主机、端口和抓包大小，避免无过滤全量抓包。\n5. 判断是否正常业务、重试风暴、爬虫/攻击、发布变化或下游变慢，并采取限流、扩容、熔断或封禁等对应措施。\n\n面试时请如实说明本人实际用过的命令和案例；未使用过某工具不要写“用过”。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Prometheus 告警规则与验证",
+      "content": "有实际搭建过 Prometheus 的监控告警项吗",
+      "answer": "Prometheus 按规则表达式和持续时间判断告警，交给 Alertmanager 做路由、分组、抑制和通知。例如检测抓取目标持续不可用：\n\n```yaml\ngroups:\n  - name: target-health\n    rules:\n      - alert: TargetDown\n        expr: up == 0\n        for: 2m\n        labels:\n          severity: warning\n        annotations:\n          summary: Target scrape failed\n```\n\n`up` 反映抓取是否成功，不直接代表业务交易正常。业务告警还应基于错误率、延迟、队列或 SLO，并处理缺失指标、低流量与恢复条件。\n\n用 `promtool check rules` 检查语法，使用规则测试与实际通知验证从触发到恢复的链路；阈值和 for 应按基线与目标设置，避免只有固定 CPU 阈值的噪声告警。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 中的 Prometheus 存储",
+      "content": "在 k8s 里如何部署 Prometheus? 如何存储数据？",
+      "answer": "在 Kubernetes 中可用 Prometheus Operator 或 prometheus-community/kube-prometheus-stack 部署，配置服务发现、抓取对象、资源、告警和访问权限。\n本地 TSDB 使用持久卷保存 WAL 和数据块，应选择满足其文件系统语义与性能要求的块存储/本地盘，例如基于可靠块卷的 ext4/XFS。PVC 是申请存储的接口，不代表所有后端都适合；Prometheus 官方不支持 NFS（包括 EFS）作为本地 TSDB 存储，Ceph RBD 与 CephFS 也不能混为一谈。\n规划 retention 时间/容量、空间余量和故障恢复。长期存储或多副本查询可结合 Thanos、Mimir 等方案；remote_write、对象存储和 HA 去重应按所选组件设计。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "hard"
+    },
+    {
+      "title": "全链路监控的对象与指标",
+      "content": "你们的监控系统主要有监控哪些信息呢",
+      "answer": "1. 基础设施监控：服务器的 CPU、内存、磁盘、网络，节点的存活状态。\n2. 应用监控：应用的 QPS、响应时间、错误率、内存使用、GC 情况。\n3. 数据库监控：数据库的连接数、慢查询、主从同步延迟、锁等待。\n4. 中间件监控：Redis 的命中率、连接数，Kafka 的消息堆积、消费速率，ES 的分片状态、索引大小。\n5. 业务监控：业务的访问量、转化率、订单量等业务指标。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Pod 资源、状态与业务监控",
+      "content": "你之前如何对 pod 资源实现监控？包括资源、存活等等",
+      "answer": "Pod 监控应把不同数据源分开：\n\n1. CPU、内存等容器资源使用量：由 kubelet/cAdvisor 暴露，可由 Prometheus 抓取；metrics-server 提供面向 HPA 和 kubectl top 的基础资源指标。\n2. Kubernetes 对象状态：kube-state-metrics 从 API Server 生成 Deployment、Pod、PVC 等对象状态指标。\n3. 节点指标：node-exporter 采集宿主机 CPU、内存、磁盘、文件系统和网络等操作系统指标，不是 Pod 资源采集器。\n4. 存活与就绪：livenessProbe 影响容器重启，readinessProbe 决定是否接收 Service 流量，startupProbe 保护慢启动应用。\n5. 还应结合应用指标、日志、Events、链路追踪和告警规则。\n\n个人经历部分应说明真实使用的采集链路、仪表盘、告警阈值和处理案例。",
+      "explanation": "",
+      "categoryId": "bank-category-11",
+      "difficulty": "medium"
+    },
+    {
+      "title": "灰度与蓝绿发布的流量控制",
+      "content": "灰度和蓝绿发布如何控制流量？Deployment 副本比例能否替代请求权重？",
+      "answer": "灰度发布逐步让部分请求或用户使用新版本，可按网关权重、请求头、用户标识或受控分组分流。新旧实例同时存在，但 Deployment 的副本比例与 maxSurge 不是严格的请求流量权重。\n\n蓝绿发布保留两套环境，经验证后切换 Service selector、负载均衡或网关入口。它需要额外容量，切换和回退仍受连接池、DNS缓存、会话、后台任务与数据兼容影响。\n\n共同流程：建立指标基线 → 部署并验证新版本 → 逐步分流或切换 → 检查延迟、错误率与业务指标 → 异常回退 → 连接排空后回收旧版本。采用兼容的数据库迁移；应用回滚不能自动撤销已写入的数据或破坏性 Schema 变更。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "容器化私有交付的实施流程",
+      "content": "容器化应用交付到客户私有环境，需要准备和验证哪些内容？",
+      "answer": "以下是方案框架，个人经历只填写实际负责的部分：\n\n1. 明确系统架构、操作系统/CPU 架构、容器平台版本、网络、存储、容量与离线条件。\n2. 制作不可变的镜像和安装包，提供配置模板、依赖清单、校验值、证书与凭证管理方式。\n3. 定义数据初始化、数据库兼容迁移、资源与权限、健康检查、入口和持久化配置。\n4. 在与客户接近的环境演练安装、升级、回滚与备份恢复；离线场景验证所有镜像和包依赖完整。\n5. 交付操作手册、监控告警、故障定位与升级说明，明确双方责任和支持边界。\n\n验收应包含业务功能、性能、断网/重启恢复、数据持久化与备份还原，不能把“容器能启动”当成完整可用交付。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "规模化主机管理与配置治理",
+      "content": "如何治理几十到数百台主机的配置、变更和日常运维？",
+      "answer": "以资产清单/CMDB 为基础，记录用途、负责人、环境、版本和依赖，按角色分组管理。\n\n用 Ansible 等自动化工具和版本化配置进行可重复交付，设计幂等、分批执行、超时、审计与回滚。监控应覆盖主机与业务，告警能定位负责人并验证恢复。\n\n统一访问权限、补丁基线、证书与密钥管理；定期测试备份恢复，维护变更窗口、故障手册和容量趋势。自动化结果必须有成功/失败汇总，不能默认命令执行完就意味着所有机器一致。\n\n面试时补充本人真实规模、工具和案例，避免把这个参考方案描述成已经管理过的环境。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "巡检、备份与 Shell 脚本工程化",
+      "content": "巡检、备份和批量操作脚本应具备哪些功能？如何体现脚本可靠性？",
+      "answer": "脚本可以覆盖 CPU/内存/磁盘/inode、服务端口、日志与证书检查；备份包括数据库/文件、保留策略、校验和恢复验证；批量操作包括部署、配置核对和日志汇总。\n\n工程化要求：参数与配置分离，检查依赖和权限，限定目标，设置超时与退出码，输出结构化结果和错误日志。批量执行采用有界并发，失败重试区分临时故障与永久错误，变更尽量幂等并提供回滚。\n\n临时文件用安全方式创建并通过 trap 清理；涉及破坏性操作先做范围校验和预览。`set -e` 不能代替完整错误处理。备份成功不仅看文件存在，还要验证可恢复。\n\n个人经历可按“[脚本用途]—[关键设计]—[真实故障或优化]—[可验证效果]”回答，不能凭模板声称已经写过或节省了某个百分比。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "不停机发布的前提与验证",
+      "content": "什么条件下可以尽量不停机升级？PDB 是否直接限制 Deployment 滚动更新？",
+      "answer": "不停机升级是需要验证的目标，不能无条件承诺零中断。\n\n通常需要足够的可用副本与剩余容量、正确的 readiness/startupProbe、适合的 maxSurge/maxUnavailable、优雅终止、连接排空、重试、会话管理和新旧 API/数据库兼容。单副本在有额外容量等条件下也可能滚动更新，但可用性风险更高。\n\nDeployment 滚动更新直接受其更新策略控制。PDB 主要约束使用 Eviction API 的自愿驱逐，例如节点维护 drain；它不直接阻止 Deployment/StatefulSet 控制器按更新策略删除 Pod，也不能防止机器故障等非自愿中断。\n\n发布前备份并预演，发布中检查延迟、错误与业务指标，失败及时回退应用。数据库采用兼容迁移，并准备独立的数据恢复方案。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "跨发行版安装脚本的可靠性",
+      "content": "有针对不同系统写过安装脚本吗？例如一键安装 nginx、mysql 等等",
+      "answer": "回答框架（请按本人真实经历补充）：\n\n我会先识别发行版和版本，再选择包管理器或官方仓库；脚本需要幂等、可重复执行，并具备参数校验、错误处理、日志和退出码。\n\n基本流程：\n\n1. 检测系统：读取 `/etc/os-release`，区分 apt、dnf/yum 等。\n2. 校验权限、网络、磁盘、端口和已有版本。\n3. 使用受信任的软件源并校验包/签名，不固定下载过时版本。\n4. 写入配置前备份，使用临时文件并通过语法检查后原子替换。\n5. 使用 systemd 管理服务，启动后执行健康检查。\n6. 失败时恢复配置或卸载本次变更；输出明确日志。\n\n如果生产环境允许，优先使用 Ansible 等配置管理工具表达幂等状态，而不是维护一段只适用于旧版 CentOS 的一次性脚本。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "运维开发、DevOps 与 SRE",
+      "content": "请阐述你对运维开发（SRE/DevOps）的理解，包括其核心理念、主要目标、关键技术栈以及它对现代软件交付流程的积极影响。",
+      "answer": "运维开发通过软件工程和自动化工具改善交付、管理与故障处理，例如配置管理、平台 API 和自助操作。\n\nDevOps 强调开发与运维协作、持续交付、反馈和共享责任；不是某个工具或岗位名称。SRE 以工程方法管理可靠性，常使用 SLI/SLO、错误预算、自动化、事故响应和 toil 治理，和 DevOps 有重叠但不是同义词。\n\n回答时说明实际解决的问题、交付或可靠性目标、采取的工程措施与可验证效果。Jenkins、Ansible、Kubernetes 等只是可选工具，安装了工具并不等于已经建立完整 DevOps/SRE 实践。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Ansible 模块与 command、shell",
+      "content": "ansible 做过什么，用过什么模块，cmd 模块有什么符号不能用",
+      "answer": "Ansible 常用于包安装、配置、服务、用户和发布，常用 package/apt/dnf、copy、template、file、systemd_service、user、uri、command、shell 等模块。\ncommand 不通过 shell，管道、重定向及 `| > < & ;` 不按 shell 语法执行。不过 ansible-core 2.16+ 的 expand_argument_vars 可在传参前展开环境变量，不能一概说变量永远不展开；这与完整 shell 展开仍不同。\n需要 shell 语法时使用 shell，并正确引用和校验输入。优先专用幂等模块，必要时使用 argv 避免参数分词问题。\n个人经历请按真实 playbook、角色、inventory、重复执行效果和故障案例补充，未做过的工作不要写成经历。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "客户端与后端协同升级",
+      "content": "版本升级时 app 也要版本更新你们是怎么对接的",
+      "answer": "后端与移动/桌面客户端可能无法同时升级。客户端通常需要分发、审核或用户安装，应以真实版本和发布渠道为准。\n\n后端先保持旧客户端协议兼容，数据库采用兼容迁移；客户端使用版本检查、功能开关和适当的分批发布。关键字段与错误语义要明确，不把新增功能强行要求为旧版本必填。\n\n验证旧/新客户端分别与过渡后端配合，观察错误、登录、数据读写与关键流程。Android 覆盖安装还需相容的签名和递增 versionCode；服务器升级不会自动让已经安装的 APK 变成新版本。\n\n实际经历按角色、协调方式和可验证结果说明，回退方案要覆盖客户端、服务端和数据兼容。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "CI/CD、发布治理与多环境交付",
+      "content": "CI、持续交付和持续部署有什么区别？如何构建可靠的多环境发布流程？",
+      "answer": "CI（持续集成）在代码变更后自动验证、测试和构建。持续交付使产物保持可发布，并可保留人工决策；持续部署进一步自动发布符合条件的变更。三者不能全部等同于“Jenkins 自动上线”。\n\n典型流程：代码审查 → 测试/构建 → 生成带版本或 digest 的不可变产物 → 存入仓库 → 依次部署测试、预发和生产 → 健康与业务验证 → 异常回退。跨环境应推广同一个已验证产物，而不是每到一个环境重新构建不同内容。\n\n配置和凭证与产物分离，权限最小化，记录审批、版本与操作者。发布可选滚动、蓝绿或灰度，提前检查容量、会话和连接排空；数据库变更需要兼容设计及独立恢复方案。\n\n加入超时、并发控制、失败终止、可观察结果和回滚步骤。个人回答填写 [真实工具链]、[本人职责]、[一次真实发布/失败恢复]，避免虚构已经实施的流水线或提升百分比。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "离线软件安装与制品管理",
+      "content": "内网环境你会如何安装软件？",
+      "answer": "先区分可通过批准网关联网的内网与完全隔离环境。完全离线环境不能仅配置一个代理就获取外网包。\n\n准备与目标系统、CPU 架构及版本匹配的包和完整依赖，使用受信任来源并记录签名/校验值、许可证与安装顺序；可建立内网 APT/RPM 仓库，或提供离线包集合。\n\n容器镜像可通过 `docker save/load` 等归档传输，但需包含全部镜像、初始化数据与依赖。应用语言包也应按锁定依赖制作离线缓存，避免安装时再动态下载。\n\n有授权外联通道时才使用受控代理，管理凭证与审计。安装前预演依赖完整性，安装后验证版本、服务、业务和回滚；不应在生产直接尝试不明来源的一键脚本。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Git merge 与 rebase",
+      "content": "git merge 和 git rebase 有什么区别",
+      "answer": "merge 合并分支历史：能 fast-forward 时通常只移动分支指针，不产生新的合并提交；分支发生分叉或使用 --no-ff 时会创建合并提交。\nrebase 把待重放的提交应用到新基底，通常得到新提交 ID，使历史更线性；默认 rebase 不保留合并拓扑，保留需求要核对 --rebase-merges 等选项。\nmerge 冲突通常在合并结果中集中处理；rebase 可能在重放多个提交时分别遇到冲突。\n共享历史一般优先 merge。对已发布提交执行 rebase 需要团队协调，因为历史被改写，不能随意强推覆盖他人的工作。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Jenkins 自动触发方式",
+      "content": "Jenkins 自动触发除了 webhook 还能怎么做？",
+      "answer": "Jenkins 可通过源码仓库 webhook、定时构建、轮询 SCM、上游任务或受授权 API 等触发流水线。人工点击 Build 是手动触发，不属于自动触发机制。\n\nwebhook 适合接收提交事件，poll SCM 周期检查变更；定时任务可使用 Jenkins 的 H 语法分散触发时刻。API 调用如果由外部自动化发起，属于自动化链路，但接口本身仍需身份、权限和相应请求保护。\n\n明确事件类型、分支、凭证、重试与重复事件处理，验证失败通知和实际构建记录。不要为接入 webhook 全局关闭认证或安全保护。",
+      "explanation": "",
+      "categoryId": "bank-category-12",
+      "difficulty": "easy"
+    },
+    {
+      "title": "vMotion 原理与主机维护",
+      "content": "在虚拟化运维中，当需要对物理服务器进行维护时，应如何处理其上运行的虚拟机？是否可以直接重启或关机？请说明虚拟机漂移（vMotion）的基本原理、实施条件，并结合实际运维场景阐述合理的操作流程。",
+      "answer": "vMotion 迁移运行中虚拟机的内存及执行状态，通常通过预拷贝脏页并在短暂切换阶段转移执行权，从而减少停机，不能保证所有负载完全零暂停。\n计算资源迁移通常要求源/目标能访问相同虚拟机存储；支持的 shared-nothing/组合迁移可同时迁移磁盘，不必始终使用共享存储。支持条件满足时也可跨 vCenter，不能一律要求同一 vCenter。\n检查版本、许可、CPU/EVC、虚拟网络、vMotion 网络带宽/连通性、目标容量和存储兼容；特殊设备或高脏页速率可能有限制。\n主机维护前按预案迁移，迁移后验证虚拟机、连接和业务，再维护原主机。个人运维经历需按实际平台和操作范围回答。",
+      "explanation": "区分计算 vMotion、Storage vMotion 和组合迁移，各自对存储、网络、版本与许可的要求不同。预拷贝能缩短切换暂停，但不能代替业务连续性验证。",
+      "categoryId": "bank-category-13",
+      "difficulty": "hard"
+    },
+    {
+      "title": "托管 Kubernetes 与自建集群",
+      "content": "你们 k8s 是自建还是用云的，你觉得用云跟自建的区别是什么",
+      "answer": "托管 Kubernetes 与自建集群应从责任边界和业务约束比较：\n\n- 托管集群：云厂商通常负责控制面可用性、部分升级和基础设施集成，上手较快；但会增加平台依赖、版本/插件限制、网络集成和持续费用。\n- 自建集群：控制权和定制能力更强，可适配私有环境；同时需要团队承担控制面高可用、升级、安全补丁、备份恢复、监控和 7×24 运维。\n- 选型维度：SLA、合规、网络与存储、可移植性、人员能力、升级节奏、灾备、总拥有成本和厂商锁定。\n\n面试回答最后应补充本人真实使用过的平台、负责范围和实际取舍；如果没有相关经历，应明确说明，不要虚构。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "云服务器与机房运维的责任边界",
+      "content": "云服务器和物理服务器有什么不同和优劣",
+      "answer": "云服务器通常由平台负责物理设施和虚拟化层，用户仍需负责自己的操作系统、应用、权限、数据与业务可用性；托管数据库/PaaS 的责任边界与 IaaS 虚拟机不同。\n\n机房物理机运维还可能包括上架、供电、带外管理、硬件故障、布线和容量交付。云上也存在裸金属等产品，不能把“云”全部等同于共享虚拟机。\n\n比较时看交付速度、弹性、故障域、网络、性能、许可和完整成本。购买一台云主机不自动获得应用多副本、数据备份或跨区高可用。个人经历应说明实际平台、职责和权限，不要把厂商责任算作自己完成的工作。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "公有云平台能力与实际经历",
+      "content": "如何介绍公有云平台经验，而不夸大未实际操作的服务？",
+      "answer": "按真实情况填写：“实际使用 [平台与环境]，负责 [计算/网络/存储/身份/数据库等实际项目]，拥有 [权限范围]，完成过 [具体操作或故障案例]。”\n\n可按能力说明：计算实例与镜像，VPC/子网/路由/安全组，负载均衡与 DNS，对象/块存储，IAM，监控与成本治理，托管数据库或 Kubernetes。核对自己是使用、维护还是架构设计，明确平台代管部分。\n\n可举一个真实案例，讲目标、实施、验证、恢复和费用或可靠性效果。没有实际使用的云平台只表达了解或实验，不应直接背成“主要用阿里云/熟练掌握全部服务”。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "阿里云 ACK 的组件与责任边界",
+      "content": "了解阿里云的 K8S 用的什么组件吗",
+      "answer": "ACK 仍使用 Kubernetes 核心 API/调度/控制器及节点 kubelet、运行时等组件；控制面责任和可见性取决于托管、专有及其他集群类型。\n网络可按集群能力与配置选择 Terway 或 Flannel，不能把所有 ACK 都写成 Terway。Terway 对接 VPC/ENI，具体网络策略和地址能力取决于其模式。\n存储通常通过 CSI 等组件对接云盘、NAS 等后端，需确认访问模式与适用场景。监控、日志、负载均衡及伸缩有云集成组件，但并非每个集群默认全部安装。\n回答时给出本人使用的集群版本、类型、网络模式和实际启用组件。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "测试环境平台与权限说明",
+      "content": "如何说明自己接触的测试环境、虚拟化平台与权限？",
+      "answer": "填写真实平台 [VMware/KVM/云主机/容器等实际环境]、用途、资源申请与交付方式，以及本人可执行的操作。\n\n说明能否创建虚拟机、修改网络/存储、制作镜像、配置快照或备份，还是仅使用已交付的实例。区分测试与生产经历，快照不能替代独立备份。\n\n举真实的环境搭建、权限或故障案例，包含验证与恢复。没有接触过的平台明确说明未实际操作，不要将示例技术清单当成个人经历。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "常见虚拟化平台与管理层",
+      "content": "了解哪些虚拟化的软件",
+      "answer": "常见服务器虚拟化包括 VMware ESXi、KVM、Hyper-V 和 Xen 等；桌面或实验还可能使用 VirtualBox 等工具。\n\nESXi 是 hypervisor，vCenter 是集中管理平台，vSphere 是包含相关产品与能力的套件名称，三者不能当成三个并列 hypervisor。KVM 是 Linux 内核虚拟化接口，常结合 QEMU 与 libvirt 等用户态执行和管理工具。\n\n比较应按实际版本看 CPU/设备支持、存储网络、管理能力、迁移、备份、许可与维护成本，不做脱离环境的性能排名。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "easy"
+    },
+    {
+      "title": "虚拟化集群管理的实际经历",
+      "content": "如何说明虚拟化集群管理的真实经验与权限？",
+      "answer": "先说明实际使用的平台、版本和环境；在 VMware 场景中区分 ESXi 主机操作与 vCenter 集中管理。\n\n按真实权限说明创建/配置虚拟机、模板、资源分配、虚拟网络、共享存储、迁移、维护模式、告警和备份恢复。升级或迁移前核对兼容性、容量、许可、网络与回退方法，并验证业务状态。\n\n只做过实验就明确是实验，使用客户提供的虚拟机不等于维护过整个虚拟化集群；不要凭模板编造 vCenter 生产管理经历。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "ESXi 与 QEMU/KVM 的对比",
+      "content": "请从架构、性能、管理、成本及生态系统五个核心维度，系统阐述 VMware ESXi 与基于 Linux 内核的 KVM（Kernel-based Virtual Machine）这两种主流虚拟化平台的主要区别。",
+      "answer": "ESXi 是专用裸机 hypervisor，通常通过 vCenter/vSphere 管理；KVM 将虚拟化能力集成进 Linux 内核，以硬件辅助运行虚拟机，常与 QEMU 的设备模型及 libvirt 管理协作，通常归为 Type-1。\n两者都能提供较高性能，实际结果取决于硬件、NUMA、驱动、存储、网络、超分和负载，不能只凭产品名称断言谁更快。\nESXi 生态强调商业集成；KVM 可结合不同开源或商业管理平台。许可、支持和产品组合会随版本与合同变化，不固定写“ESXi 基础版永久免费、按 CPU 计费”。比较成本应包括授权、支持、人员、硬件兼容、备份、迁移和整体运维投入。",
+      "explanation": "判断架构看虚拟化能力执行的位置，而不是是否使用 Linux。KVM 在内核中执行，QEMU 在用户空间提供设备模型；这与把虚拟化主要放在普通宿主应用中的 Type-2 模型不同。",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "KVM、用户态 VMM 与设备模型",
+      "content": "请阐述 KVM（Kernel-based Virtual Machine）虚拟化技术的基本原理、架构特点及其在 Linux 环境中的工作方式。",
+      "answer": "KVM 是 Linux 内核提供的硬件辅助虚拟化接口。用户态 VMM 通过 `/dev/kvm` 等接口管理虚拟机与 vCPU，内核完成相应执行与中断机制。\n\nQEMU 是常见用户态设备模型与 VMM，但 KVM 不要求只能配合 QEMU，也有其他用户态实现。x86 常依赖 VT-x/AMD-V 等支持，ARM 等架构有自己的虚拟化机制，不能把 KVM 限定为只支持 Intel/AMD。\n\nvirtio、直通、网络/存储与 CPU 调度影响性能和隔离；使用 libvirt 等管理工具也不改变内核与用户态 VMM 的职责。",
+      "explanation": "",
+      "categoryId": "bank-category-13",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Python 浅拷贝与深拷贝",
+      "content": "深浅拷贝有什么区别？",
+      "answer": "赋值通常只是增加引用；拷贝需要区分对象本身与其引用的内容。\n\n- 浅拷贝 `copy.copy`：对列表等创建新的外层容器，内部元素仍引用原对象；共享的可变元素修改会相互影响。\n- 深拷贝 `copy.deepcopy`：递归复制适合复制的内容，使用 memo 处理循环与重复引用；不可变对象等可能被复用，自定义类也能定义拷贝行为，不能说所有子对象一定是全新的。\n\n```python\nimport copy\noriginal = [[1], [2]]\nshallow = copy.copy(original)\ndeep = copy.deepcopy(original)\nshallow[0].append(3)\nassert original == [[1, 3], [2]]\nassert deep == [[1], [2]]\n```\n\n给 shallow 的某个外层位置重新赋值不会修改 original 的外层位置；文件、连接等资源也不适合盲目深拷贝。",
+      "explanation": "",
+      "categoryId": "bank-category-14",
+      "difficulty": "easy"
+    },
+    {
+      "title": "CPython 引用计数与循环 GC",
+      "content": "python 的垃圾回收机制 (GC) 了解过吗",
+      "answer": "以 CPython 为例，主要使用引用计数及时回收引用归零的对象，再由循环垃圾回收器检测部分容器对象形成的不可达引用环。循环 GC 并不是“引用计数完全失效后才扫描所有对象”。\n分代策略、阈值和触发条件依 CPython 版本/构建而变化，不能把“三代 0/1/2”当作所有 Python 永久不变的规范；例如 3.14 系列的小版本对代际策略有过调整，应查看运行版本的 gc 文档。\nPyPy 等实现有不同回收机制。引用归零或完成 GC 也不保证进程 RSS 立即下降，因为解释器/分配器可能保留内存用于复用。",
+      "explanation": "",
+      "categoryId": "bank-category-14",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Python 解释器版本与虚拟环境",
+      "content": "如何在同一机器上使用不同的 python 环境？",
+      "answer": "区分解释器版本与包环境：venv 通常隔离同一解释器的依赖，不会自动把 Python 解释器升级或换成另一个版本。\n\n需要多个解释器时，可使用已核验的多版本安装、pyenv、Conda 或容器等方式；选用仍受支持并与项目兼容的版本，不覆盖系统 Python。\n\n```bash\npython3 -m venv .venv\n. .venv/bin/activate\npython -m pip install -r requirements.txt\npython --version\npython -m pip --version\n```\n\n先确认 python3 指向所需解释器；项目应记录 Python 版本、锁定依赖和来源，避免 pip 与实际运行解释器不一致。Windows 激活方式不同。",
+      "explanation": "",
+      "categoryId": "bank-category-14",
+      "difficulty": "easy"
+    },
+    {
+      "title": "团队规模、分工与个人职责",
+      "content": "面试中如何说明团队人数、职责分工与自己的角色？",
+      "answer": "按真实且可披露的信息回答：\n\n“团队约 [真实人数或允许披露的范围]，职责包括 [实际岗位/分工]。我主要负责 [本人职责]，与 [开发/测试/安全等实际合作方] 协作，参与 [真实交付或故障案例]，结果是 [有证据的效果]。”\n\n人数不确定时说明统计口径，区别正式人员、外包与跨团队协作者。进一步说明责任边界、值班或变更流程，以及本人独立完成和参与完成的部分。没有带团队经历就不要编造管理职责。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 能力自评与证据",
+      "content": "如何对 Kubernetes 熟练程度做可信的自评？",
+      "answer": "不要凭空使用“7 分”或“精通”作为答案，按能力与证据说明：\n\n- 基础：能解释资源模型，编写和验证工作负载配置。\n- 交付：能处理镜像、配置、探针、服务暴露和发布回滚。\n- 运维：能定位调度、网络、存储、权限或性能问题，并有恢复记录。\n- 架构：能说明容量、故障域、升级与可靠性取舍。\n\n分别填写生产、测试或实验中的真实经验，给出操作范围、一个具体案例和当前不足。若要求打分，说明评分标准和依据，而不是背一个统一数字。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "代表项目的 STAR 表达",
+      "content": "如何介绍一个代表项目，清晰说明自己的贡献？",
+      "answer": "用 STAR 组织真实项目：背景/约束（Situation）→目标与责任（Task）→本人采取的行动（Action）→验证结果（Result）。\n\n模板：“在 [真实项目/场景] 中，存在 [问题与约束]，我负责 [边界]。先通过 [证据] 定位，实施 [措施与取舍]，通过 [测试/监控/验收] 验证，结果为 [真实可证明的变化]，并留下 [文档/自动化/复盘]。”\n\n明确独立完成、协作完成与使用现成平台的区别。没有数据时描述可验证行为，不编造可用率、成本降幅或生产规模；涉及机密可抽象业务名称。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "个人技术栈的分层表达",
+      "content": "如何分层介绍个人技术栈并给出可信证据？",
+      "answer": "按照自己真实掌握的领域组织：主机与网络、容器与编排、数据库与中间件、监控日志、自动化与交付、云与安全。\n\n每个领域说明“生产负责/协作维护/实验使用/概念了解”的程度，选择一个具体例子说明问题、操作与验证。技术名称不宜堆砌，重点是能解释职责边界、失败模式与恢复方法。\n\n模板：“我主要负责 [实际领域]，用过 [真实工具] 完成 [真实任务]，证据包括 [配置、脚本、复盘或结果]，目前在补充 [真实短板]。”",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "生产资源规模与架构表达",
+      "content": "如何如实介绍生产服务器规模与系统架构？",
+      "answer": "按允许披露的口径说明 [实际物理机/虚拟机/节点/实例数量或区间]、环境、故障域和核心业务组件。不要把一个节点上的多个 Pod 算作多台服务器。\n\n说明入口、应用、数据库/中间件、存储和监控之间的关系，自己负责哪些部分，如何控制容量、发布与故障恢复。确有高可用时解释副本、故障域和恢复验证，不只说“搭了集群”。\n\n无法提供精确数量时给可披露区间和统计口径，删除模板中的“几十到上百台”等虚构规模。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "业务、技术架构与个人职责",
+      "content": "如何说明业务背景、技术架构与本人职责？",
+      "answer": "从真实且可披露的业务目标开始：用户是谁、关键流程是什么、可用性与数据要求有哪些，再说明入口、应用、数据库、中间件与外部依赖。\n\n填写“[真实业务/抽象业务场景]—[实际架构与规模口径]—[本人责任]—[一个交付或故障案例]—[验证效果]”。明确团队成果和本人贡献，涉及客户或公司机密时使用经过允许的抽象描述。\n\n不要将参考架构里的每个产品或“企业私有化平台”直接当作自己的实际业务。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "职业规划与可验证目标",
+      "content": "如何给出真实、可执行的职业发展规划？",
+      "answer": "从个人实际兴趣、职责和短板出发，说明近期、中期目标及行动，不要直接背“未来一定转架构师”的模板。\n\n近期可设定一个能交付的目标，例如完成一次故障演练、自动化改造或可靠性改善；中期扩大设计与协作责任，形成可验证项目。长期方向根据经验和反馈调整。\n\n用成果和检查时间点验证进展，兼顾技术深度、沟通、文档与业务理解。培训或认证可辅助学习，但不能替代真实实践。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "个人优势、学习与成果证明",
+      "content": "如何介绍个人优势、近期学习与实际成果？",
+      "answer": "选择与岗位相关的真实优势，使用证据而不是只列形容词：例如定位问题、自动化交付、可靠性改进、协作或文档，每项配一个实际行动和结果。\n\n近期学习按“[真实主题]—[为何学习]—[实验或项目]—[成果与不足]”说明。仅阅读过文档不宜声称生产熟练；已经做过实验则可以展示配置、脚本、故障复现和验证记录。\n\n模板内容留待本人填写，不凭空声明已经掌握某个技术栈、证书或项目。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "运维工作的目标与职责",
+      "content": "你对运维工作的理解",
+      "answer": "运维工作是保障公司的 IT 系统稳定运行，为业务提供可靠的技术支持，主要包括：\n\n1. 基础设施的运维：服务器、网络、存储等基础设施的管理和维护。\n2. 应用的运维：应用的部署、扩缩容、故障排查、监控告警。\n3. 自动化运维：开发自动化工具和流程，减少人工干预，提高运维效率。\n4. 安全运维：保障系统的安全，防止攻击和数据泄露。\n5. 业务支持：为开发团队和业务团队提供技术支持，解决技术问题。\n\n目标应结合业务的 SLO、数据 RPO/RTO、容量与成本来衡量。发布、补丁和恢复需有验证与回滚，故障后复盘并减少重复人工工作，知识通过可用的文档、工具与演练传递。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "运维能力提升与成果沉淀",
+      "content": "你平时会如何去提升运维能力呢",
+      "answer": "从真实工作中的短板选择目标，结合官方文档、实验和项目改进，形成“理解原理—实施—故障复现—验证—复盘”的循环。\n\n优先沉淀自动化、可运行配置、排障手册、备份恢复演练和可靠性指标，邀请同事审阅并根据反馈修正。学习编程、网络、数据库和业务上下文，提高协作与技术表达。\n\n课程和认证是辅助，成果要能在具体问题中体现。个人回答提供实际作品和下一阶段计划，不虚构证书或已经完成的能力提升。",
+      "explanation": "",
+      "categoryId": "bank-category-15",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Nginx 性能调优与故障排查",
+      "content": "nginx 调优、日常故障处理思路",
+      "answer": "Nginx 调优应先建立吞吐、延迟、错误率、CPU、内存、连接和磁盘 I/O 基线，再根据瓶颈调整：\n\n1. `worker_processes auto` 通常比手写 CPU 数更稳妥；结合 CPU 亲和和容器配额验证。\n2. 根据文件描述符上限、连接模型调整 worker_connections 和系统限制；它包括客户端与上游等连接，不能直接当成每个 worker 可承载的客户端数。\n3. 合理配置 keepalive、超时、缓冲、缓存、压缩和上游连接池，避免通用参数照抄。\n4. 日志应分级、采样、轮转和集中采集，不建议笼统关闭，以免失去审计和排障依据。\n\n故障处理：先执行 `nginx -t`，检查进程、监听、错误日志、上游状态、DNS、证书、系统资源和网络；使用 `curl -v`、`ss`、`tcpdump` 等定位，根据根因选择恢复；配置变更经检查后可使用 graceful reload，但 reload 不能解决全部运行时故障。任何调优都应压测、灰度并保留回滚配置。",
+      "explanation": "",
+      "categoryId": "bank-category-16",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Nginx 动态 DNS 与 Pod 地址变化",
+      "content": "Nginx 的 pod 的解析缓存时间参数你是怎么修改的？除了这个解决方式还有其他思路吗？",
+      "answer": "如果 Nginx 在配置加载时把 DNS 名称解析为 Pod IP，后续 IP 变化可能导致转发失败。仅配置 `resolver` 并不意味着所有静态 upstream 自动动态解析。\n\n开源 Nginx 从 1.27.3 起支持 upstream 的 `server ... resolve`；需要共享内存 zone 和 resolver，例如：\n\n```nginx\nupstream app_backend {\n    zone app_backend 64k;\n    resolver 10.96.0.10 valid=30s;\n    server app.default.svc.cluster.local:8080 resolve;\n}\nserver {\n    listen 8080;\n    location / {\n        proxy_pass http://app_backend;\n    }\n}\n```\n\n示例 DNS IP、域名、端口需替换；先确认 Nginx 版本和实际 DNS TTL/缓存行为。旧版可采用兼容方案，如受控 reload、平台服务发现或变量形式 proxy_pass，但要验证 URI 转发语义。\n\n普通 ClusterIP Service 在保持对象不变时提供相对稳定的 VIP，通常比直接引用 Pod IP 合适；Headless DNS 返回端点 IP，仍要处理动态解析、健康检查和连接重试。",
+      "explanation": "",
+      "categoryId": "bank-category-16",
+      "difficulty": "medium"
+    },
+    {
+      "title": "HAProxy 与 LVS 的区别",
+      "content": "haproxy 和 lvs 的区别",
+      "answer": "HAProxy 是用户空间代理，mode tcp 可做四层 TCP 转发，mode http 可解析 HTTP 做七层路由，还支持健康检查、TLS 和连接管理。\nLVS 基于 Linux 内核 IPVS，主要做四层负载均衡，常见 NAT、DR、TUN 转发模式，对返回路由、VIP、ARP 等有不同要求；常结合 Keepalived 实现地址/调度器高可用。\n需要按 URL/Header 分流或 TLS 终止时可选择 HAProxy 等代理；需要特定四层转发架构时可评估 LVS。实际性能与稳定性依赖转发模式、连接/请求模型、硬件和配置，不能仅用“内核一定更快、HAProxy 只能七层”概括。",
+      "explanation": "",
+      "categoryId": "bank-category-16",
+      "difficulty": "medium"
+    },
+    {
+      "title": "Nginx 负载策略与配置重载",
+      "content": "你们的 nginx 负载策略是什么，nginx 怎么确定配置文件语法对不对，如何热加载",
+      "answer": "Nginx 常见上游策略有默认的加权轮询、least_conn、ip_hash，以及适当配置的 hash/consistent。选择依据是请求耗时、会话和后端负载，不能只凭机器数量决定。\n\nip_hash 会按客户端地址分组，但代理源地址、拓扑变化和后端故障会影响分配，不能保证永远固定会话；业务需要可靠会话时还需相应共享或持久化设计。\n\n```bash\nnginx -t\nnginx -s reload\n```\n\n如果运行使用自定义配置路径，应让检查与重载针对同一实例和配置。reload 启动新 worker 并使旧 worker 优雅退出，不会把已有连接立即迁移到新上游；检查日志、配置生效和业务指标，不只看命令退出码。",
+      "explanation": "",
+      "categoryId": "bank-category-16",
+      "difficulty": "medium"
+    },
+    {
+      "title": "外部 HTTP 请求到 Tomcat 的路径",
+      "content": "外部 HTTP 请求到 Tomcat 的典型路径是什么？是否必须经过 Nginx？",
+      "answer": "一种常见架构是：客户端解析 DNS → 建立连接到负载均衡/TLS 入口 → Nginx 按域名和路径反向代理 → Tomcat 接收 HTTP 并调用 Servlet/应用逻辑 → 依赖服务返回 → 响应沿链路返回。\n\nNginx 可以处理静态资源、TLS 和入口转发，Tomcat 本身也能提供 HTTP 服务，因此不一定必须经过 Nginx。实际链路可能包括网关、WAF 或内嵌 Tomcat，应按架构说明协议、端口、超时和请求头。\n\n排障通过请求 ID、访问日志、上游状态和分段延迟关联，而不是只看最终 HTTP 状态码。",
+      "explanation": "",
+      "categoryId": "bank-category-16",
+      "difficulty": "easy"
+    },
+    {
+      "title": "Nginx 与 Tomcat 的分工",
+      "content": "Tomcat，nginx 等 web 服务器用来干嘛",
+      "answer": "1. Tomcat：是 Java Servlet 容器，用于运行 Java Web 应用，支持 Java Servlet 和 JSP，处理 HTTP 请求，将请求转发到对应的 Servlet 或 JSP 页面，返回响应。\n2. Nginx：是高性能的 HTTP 服务器和反向代理服务器，用于静态文件的服务、反向代理、负载均衡，处理高并发的 HTTP 请求，将请求转发到后端的应用服务器（如 Tomcat）。",
+      "explanation": "",
+      "categoryId": "bank-category-16",
+      "difficulty": "easy"
+    }
+  ]
+}

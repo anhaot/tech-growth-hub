@@ -124,13 +124,15 @@ export interface PaginatedResult<T> {
 export interface ImportPreview {
   id: string; expiresAt: string; total: number; valid: number; invalid: number;
   page: number; pageSize: number; totalPages: number;
+  categoriesToCreate?: string[];
   rows: Array<{ row: number; error?: string; warnings: string[]; question?: {
     title: string; content: string; answer: string; explanation: string;
-    difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null;
+    difficulty: 'easy' | 'medium' | 'hard'; categoryId: string | null; categoryName?: string;
   } }>;
 }
 
 export interface ImportResult {
+  categoriesCreated?: number;
   skipped?: number;
   success: number;
   failed: number;

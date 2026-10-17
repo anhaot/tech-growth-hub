@@ -84,7 +84,7 @@ openssl rand -hex 32
 docker compose up -d --build
 ```
 
-应用镜像使用 `.env` 中的 `APP_VERSION`，格式为 `vYYMMDD-N`，例如 `v261014-3`。项目不会默认构建或发布 `latest` 标签。
+应用镜像使用 `.env` 中的 `APP_VERSION`，格式为 `vYYMMDD-N`，例如 `v261017-1`。项目不会默认构建或发布 `latest` 标签。
 
 访问 `http://127.0.0.1:10089`。默认管理员用户名和密码均为 `admin`，首次登录必须修改密码。生产环境还应启用 HTTPS、设置明确的 `ALLOWED_ORIGINS` 并建立定期备份。
 

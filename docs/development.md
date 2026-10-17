@@ -437,3 +437,27 @@ API 回归覆盖版本冲突、回退、分类历史权限、旧备份、合并�
 App 阅读页与 Web 都展示完整题干，不额外展示简短标题。两端使用相同 Markdown 选项，禁止原始 HTML 执行，仅允许显式 HTTP(S) 链接；字面实体、命令引号和代码缩进保留。Web 表格在容器内滚动，App 表格固定列宽并横向滚动，正文不撑开屏幕。
 
 `fixtures/study-markdown.json` 覆盖换行、嵌套列表、长/未闭合围栏、转义管道、空表格、链接和技术符号。Web 的 `npm test` 只需 Web 依赖；`npm run test:cross-client` 需安装两端依赖，检查展示预处理和 Markdown 结构一致。App 的 `npm test` 另行验证代码和旧格式保护；Android bundle 和浏览器预览检查分别使用 `npm run export:android`、`npm run export:web`。
+
+
+## 带分类的单文件 JSON
+
+API/Web v261017-1 起支持 `formatVersion: 2`：
+
+```json
+{
+  "formatVersion": 2,
+  "categories": [{ "id": "containers", "name": "容器技术" }],
+  "questions": [{
+    "content": "容器如何隔离进程？",
+    "answer": "使用 namespaces 等隔离机制。",
+    "categoryId": "containers",
+    "difficulty": "easy"
+  }]
+}
+```
+
+`categories` 最多 1000 个，ID 和名称在文件内必须唯一；题目引用必须存在。文件内 ID 不使用部署数据库的 UUID。分类按顶层名称匹配，多个同名顶层分类会拒绝并提示整理，不支持用此格式重建嵌套层级。已有普通 JSON、CSV、Markdown 和文本格式继续兼容；普通 JSON 行也可提供 `categoryName` 按名称归类。
+
+预览给题目返回 `categoryName`、已解析的真实 `categoryId`（待创建时为 null），并返回 `categoriesToCreate`。确认时再次校验分类管理权限和范围，只有实际导入的题目会创建分类。新分类和对应题目在同一事务内保存，MySQL 对题库所有者加行锁，避免并发命名导入重复创建分类。显式指定目标分类时统一覆盖文件分类。
+
+`cd api && npm run test:bank` 验证空题库一次导入 16 类/178 道；安全回归覆盖权限、取消选择、并发、回滚、重复分类和无效引用；浏览器回归检查上传、预览、确认及分类列表刷新。

@@ -51,11 +51,7 @@ test('public bank imports all categories, preserves every field and exports the 
       const bank = JSON.parse(fs.readFileSync(filename, 'utf8'));
       assert.equal(bank.formatVersion, 1);
       assert.equal(bank.questions.length, category.count);
-      const created = await request(app).post('/api/categories')
-        .auth(token, { type: 'bearer' }).send({ name: category.name });
-      assert.equal(created.status, 201);
-      const categoryId: string = created.body.id;
-      assert.ok(categoryId);
+      const categoryId = category.name;
       for (const question of bank.questions as ImportQuestion[]) {
         assert.deepEqual(Object.keys(question).sort(),
           ['title', 'content', 'answer', 'explanation', 'difficulty', 'categoryId'].sort());
@@ -69,33 +65,56 @@ test('public bank imports all categories, preserves every field and exports the 
         answers.add(question.answer.trim());
         expected.set(question.title, { ...question, categoryId });
       }
-      const preview = await request(app).post('/api/import/preview/json')
-        .auth(token, { type: 'bearer' }).field('categoryId', categoryId).attach('file', filename);
-      assert.equal(preview.status, 200);
-      assert.equal(preview.body.total, category.count);
-      assert.equal(preview.body.valid, category.count);
-      assert.equal(preview.body.invalid, 0);
-      const rows = [...preview.body.rows];
-      for (let page = 2; page <= preview.body.totalPages; page++) {
-        const response = await request(app).get(`/api/import/preview/${preview.body.id}?page=${page}`)
-          .auth(token, { type: 'bearer' });
-        assert.equal(response.status, 200);
-        rows.push(...response.body.rows);
-      }
-      assert.equal(rows.length, category.count);
-      for (const row of rows) {
-        assert.equal(row.error, undefined);
-        assert.deepEqual(row.warnings, []);
-        assert.equal(row.question.categoryId, categoryId);
-      }
-      const imported = await request(app).post(`/api/import/preview/${preview.body.id}/commit`)
-        .auth(token, { type: 'bearer' }).send({ excludedRows: [] });
-      assert.equal(imported.status, 200);
-      assert.equal(imported.body.success, category.count);
-      assert.equal(imported.body.failed, 0);
-      assert.equal(imported.body.skipped, 0);
-      assert.equal((await db.getQuestions(login.body.user.id, 1, 1000, { categoryId })).total,
-        category.count);
+    }
+    const filename = path.join(bankDirectory, 'tech-growth-hub-question-bank-20261017.json');
+    const portable = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    const names = new Map<string, string>(portable.categories.map((category: {id: string; name: string}) => [category.id, category.name]));
+    assert.equal(portable.formatVersion, 2);
+    assert.equal(names.size, 16);
+    assert.equal(portable.questions.length, 178);
+    for (const question of portable.questions) {
+      assert.deepEqual({ ...question, categoryId: names.get(question.categoryId) }, expected.get(question.title));
+    }
+    const preview = await request(app).post('/api/import/preview/json')
+      .auth(token, { type: 'bearer' }).attach('file', filename);
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.total, 178);
+    assert.equal(preview.body.valid, 178);
+    assert.equal(preview.body.invalid, 0);
+    assert.equal(preview.body.categoriesToCreate.length, 16);
+    assert.equal((await db.getCategoriesByUserId(login.body.user.id)).length, 0);
+    assert.equal((await db.getQuestions(login.body.user.id)).total, 0);
+    const rows = [...preview.body.rows];
+    for (let page = 2; page <= preview.body.totalPages; page++) {
+      const response = await request(app).get(`/api/import/preview/${preview.body.id}?page=${page}`)
+        .auth(token, { type: 'bearer' });
+      assert.equal(response.status, 200);
+      rows.push(...response.body.rows);
+    }
+    assert.equal(rows.length, 178);
+    for (const row of rows) {
+      assert.equal(row.error, undefined);
+      assert.deepEqual(row.warnings, []);
+      assert.equal(row.question.categoryId, null);
+      assert.equal(row.question.categoryName, expected.get(row.question.title)!.categoryId);
+    }
+    const imported = await request(app).post(`/api/import/preview/${preview.body.id}/commit`)
+      .auth(token, { type: 'bearer' }).send({ excludedRows: [] });
+    assert.equal(imported.status, 200);
+    assert.equal(imported.body.success, 178);
+    assert.equal(imported.body.failed, 0);
+    assert.equal(imported.body.skipped, 0);
+    assert.equal(imported.body.categoriesCreated, 16);
+    const repeated = await request(app).post(`/api/import/preview/${preview.body.id}/commit`)
+      .auth(token, { type: 'bearer' }).send({});
+    assert.deepEqual(repeated.body, imported.body);
+    const savedCategories = await db.getCategoriesByUserId(login.body.user.id);
+    assert.equal(savedCategories.length, 16);
+    for (const category of categories) {
+      const saved = savedCategories.find(item => item.name === category.name)!;
+      assert.ok(saved);
+      assert.equal((await db.getQuestions(login.body.user.id, 1, 1000, { categoryId: saved.id })).total, category.count);
+      for (const question of expected.values()) if (question.categoryId === category.name) question.categoryId = saved.id;
     }
     assert.equal(expected.size, 178);
     const stored = await db.getQuestions(login.body.user.id, 1, 1000);

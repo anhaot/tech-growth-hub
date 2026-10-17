@@ -48,6 +48,17 @@ test('MySQL backup restoration preserves timestamp-shaped content and fractional
     const longText = '中文题库长答案'.repeat(5000);
     const largeQuestion = await db.createQuestion({ ...question, id: randomUUID(), content: longText, answer: longText, explanation: longText });
     assert.equal((await db.getQuestionById(largeQuestion.id))?.answer, longText);
+    await assert.rejects(db.createQuestionInNamedCategory(question, '失败不留空分类', true));
+    assert.equal((await db.getCategoriesByUserId(userId)).length, 0);
+    const imports = await Promise.all(Array.from({ length: 4 }, (_, index) => db.createQuestionInNamedCategory(
+      { ...question, id: randomUUID(), title: `Named import ${index}` }, 'MySQL 并发分类', true)));
+    assert.equal(imports.filter(result => result.created).length, 1);
+    assert.equal(new Set(imports.map(result => result.categoryId)).size, 1);
+    assert.equal((await db.getCategoriesByUserId(userId)).length, 1);
+    await assert.rejects(db.createQuestionInNamedCategory({ ...question, id: randomUUID() }, 'MySQL 并发分类', false, [randomUUID()]), /分类的导入权限/);
+    const uppercase = await db.createQuestionInNamedCategory({ ...question, id: randomUUID() }, 'CaseName', true);
+    const lowercase = await db.createQuestionInNamedCategory({ ...question, id: randomUUID() }, 'casename', true);
+    assert.notEqual(uppercase.categoryId, lowercase.categoryId);
     const firstConfig = await db.createAIConfig({ id: randomUUID(), user_id: userId, provider: 'openai', api_key: 'first-key', model: 'first', is_active: true, created_at: literal, updated_at: literal });
     await assert.rejects(db.createAIConfig(firstConfig));
     assert.equal((await db.getActiveAIConfig(userId))?.id, firstConfig.id);

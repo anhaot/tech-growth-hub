@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { db } from '../database/index.js';
 import { authMiddleware, AuthRequest, getLibraryOwnerId, requirePermission } from '../middleware/auth.js';
 import { ImportResult, User } from '../types/index.js';
-import { ImportFormat, ImportInputError, ImportRow, prepareImport, validateImportCategory, MAX_IMPORT_ROWS } from '../services/questionImport.js';
+import { ImportFormat, ImportInputError, ImportRow, prepareImport, validateImportCategory, MAX_IMPORT_ROWS, resolveImportCategoryName, canCreateImportCategory } from '../services/questionImport.js';
 
 const router = Router();
 const extensions: Record<Exclude<ImportFormat, 'text'>, string[]> = { csv: ['.csv'], json: ['.json'], markdown: ['.md', '.markdown', '.txt'] };
@@ -24,7 +24,7 @@ const fileUpload = (req: AuthRequest, res: Response, next: NextFunction) => {
 router.use(authMiddleware, requirePermission('import_manage', '没有导入权限'));
 interface Preview {
   id: string; userId: string; scope: string; expiresAt: number;
-  rows: ImportRow[]; state: 'preparing' | 'ready' | 'committing' | 'complete'; result?: ImportResult & { skipped: number };
+  rows: ImportRow[]; state: 'preparing' | 'ready' | 'committing' | 'complete'; result?: ImportResult & { skipped: number; categoriesCreated: number };
 }
 const previews = new Map<string, Preview>();
 const PREVIEW_TTL = 15 * 60 * 1000;
@@ -43,8 +43,8 @@ function sendError(res: Response, error: unknown) {
   res.status(error instanceof ImportInputError ? 400 : 500).json({ error: error instanceof ImportInputError ? error.message : '导入失败，请重试' });
 }
 function removeUpload(req: AuthRequest) { if (req.file) fs.rmSync(req.file.path, { force: true }); }
-async function importRows(user: User, rows: ImportRow[], excluded = new Set<number>()): Promise<ImportResult & { skipped: number }> {
-  const result = { success: 0, failed: 0, skipped: 0, errors: [] as ImportResult['errors'] };
+async function importRows(user: User, rows: ImportRow[], excluded = new Set<number>()): Promise<ImportResult & { skipped: number; categoriesCreated: number }> {
+  const result = { success: 0, failed: 0, skipped: 0, categoriesCreated: 0, errors: [] as ImportResult['errors'] };
   const ownerId = getLibraryOwnerId(user);
   const categories = new Map<string | null, string | undefined>();
   for (const row of rows) {
@@ -52,12 +52,20 @@ async function importRows(user: User, rows: ImportRow[], excluded = new Set<numb
     if (excluded.has(row.row)) { result.skipped++; continue; }
     try {
       const q = row.question;
-      if (!categories.has(q.categoryId)) categories.set(q.categoryId, await validateImportCategory(user, ownerId, q.categoryId));
-      const error = categories.get(q.categoryId);
-      if (error) throw new Error(error);
       const now = new Date().toISOString();
-      await db.createQuestion({ id: randomUUID(), title: q.title, content: q.content, answer: q.answer, explanation: q.explanation || null,
-        difficulty: q.difficulty, category_id: q.categoryId, user_id: ownerId, tags: '[]', created_at: now, updated_at: now });
+      const question = { id: randomUUID(), title: q.title, content: q.content, answer: q.answer, explanation: q.explanation || null,
+        difficulty: q.difficulty, category_id: q.categoryId, user_id: ownerId, tags: '[]', created_at: now, updated_at: now };
+      if (q.categoryName) {
+        await resolveImportCategoryName(user, q.categoryName);
+        const category = await db.createQuestionInNamedCategory(question, q.categoryName, canCreateImportCategory(user),
+          user.role !== 'admin' && user.user_type === 'integrated' ? user.category_scopes : undefined);
+        if (category.created) result.categoriesCreated++;
+      } else {
+        if (!categories.has(q.categoryId)) categories.set(q.categoryId, await validateImportCategory(user, ownerId, q.categoryId));
+        const error = categories.get(q.categoryId);
+        if (error) throw new Error(error);
+        await db.createQuestion(question);
+      }
       result.success++;
     } catch (error) { result.failed++; result.errors.push({ row: row.row, error: (error as Error).message }); }
     if ((result.success + result.failed) % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve));
@@ -67,6 +75,7 @@ async function importRows(user: User, rows: ImportRow[], excluded = new Set<numb
 function previewPage(preview: Preview, page = 1) {
   const valid = preview.rows.filter(row => !!row.question).length;
   return { id: preview.id, expiresAt: new Date(preview.expiresAt).toISOString(), total: preview.rows.length, valid, invalid: preview.rows.length - valid,
+    categoriesToCreate: [...new Set(preview.rows.flatMap(row => row.question?.categoryName && !row.question.categoryId ? [row.question.categoryName] : []))],
     page, pageSize: 20, totalPages: Math.ceil(preview.rows.length / 20), rows: preview.rows.slice((page - 1) * 20, page * 20) };
 }
 function findPreview(req: AuthRequest, res: Response): Preview | undefined {

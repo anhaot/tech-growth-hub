@@ -823,6 +823,7 @@ export const QuestionsPage: React.FC = () => {
         onSuccess={() => {
           setShowImportModal(false);
           fetchQuestions();
+          fetchCategories();
         }}
       />
 

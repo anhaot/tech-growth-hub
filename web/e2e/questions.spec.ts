@@ -1,8 +1,43 @@
 import { test, expect } from '@playwright/test';
 import { apiLogin, createQuestion, getQuestion, primeAuth, registerUser } from './utils';
+import path from 'node:path';
 
 // Mocked API responses must not be intercepted by a real service worker.
 test.use({ serviceWorkers: 'block' });
+
+test('一个 JSON 在空题库中自动创建全部分类并导入题目', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_portable`);
+  const login = await apiLogin(request, user.username, user.password);
+  await primeAuth(page, login);
+  await page.goto('/questions');
+  await page.getByRole('button', { name: '导入题目', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '导入题目' });
+  await dialog.getByRole('button', { name: 'JSON格式', exact: true }).click();
+  await dialog.locator('input[type=file]').setInputFiles(path.resolve(process.cwd(), '../question-bank/2026-10-17/tech-growth-hub-question-bank-20261017.json'));
+  await dialog.getByRole('button', { name: '解析预览', exact: true }).click();
+  await expect(dialog.getByText('共 178 道，可导入 178 道，错误 0 道')).toBeVisible();
+  await expect(dialog.getByText(/确认后自动创建 16 个分类/)).toBeVisible();
+  await expect(dialog.getByText(/分类：服务网格与Envoy（确认时创建）/).first()).toBeVisible();
+  await dialog.getByRole('button', { name: '确认导入 178 道题目', exact: true }).click();
+  await expect(dialog.getByText('成功导入：178 道')).toBeVisible();
+  await expect(dialog.getByText('已自动创建 16 个分类')).toBeVisible();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('共 178 道题目', { exact: false }).first()).toBeVisible();
+  await page.getByRole('button', { name: '导入题目', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: '导入到分类' }).getByRole('option')).toHaveCount(17);
+  await dialog.getByRole('button', { name: 'AI粘贴导入', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'AI JSON 内容' }).fill(JSON.stringify({
+    formatVersion: 2, categories: [{ id: 'reuse', name: '网络与安全' }],
+    questions: [{ content: '粘贴分类复用测试', answer: '测试答案', categoryId: 'reuse' }],
+  }));
+  await dialog.getByRole('button', { name: '解析预览', exact: true }).click();
+  await expect(dialog.getByText('共 1 道，可导入 1 道，错误 0 道')).toBeVisible();
+  await expect(dialog.getByText(/分类：网络与安全 · 难度/)).toBeVisible();
+  await dialog.getByRole('button', { name: '确认导入 1 道题目', exact: true }).click();
+  await expect(dialog.getByText('成功导入：1 道')).toBeVisible();
+  await expect(dialog.getByText(/已自动创建/)).toHaveCount(0);
+});
 
 test('题库页可以创建题目并在列表中搜索到', async ({ page, request }) => {
   const suffix = `${Date.now()}_create`;

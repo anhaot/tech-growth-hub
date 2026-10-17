@@ -1053,6 +1053,51 @@ export class DatabaseManager {
     return { ...question, revision: 1 };
   }
 
+  async createQuestionInNamedCategory(question: Question, name: string, allowCreate: boolean,
+    allowedCategoryIds?: string[]): Promise<{ categoryId: string; created: boolean }> {
+    const nameMatch = this.dbType === 'mysql' ? 'BINARY name = BINARY ?' : 'name = ?';
+    const select = `SELECT * FROM categories WHERE user_id = ? AND parent_id IS NULL AND ${nameMatch}`;
+    const prepare = (categories: Category[]) => {
+      if (categories.length > 1) throw new Error(`存在多个同名顶层分类“${name}”，请先整理或指定目标分类`);
+      if (!categories.length && !allowCreate) throw new Error('分类不存在或没有创建分类的权限，请重新解析预览');
+      const id = categories[0]?.id || randomUUID();
+      if (allowedCategoryIds?.length && !allowedCategoryIds.includes(id)) throw new Error('没有该分类的导入权限');
+      const statements: SQLStatement[] = [];
+      if (!categories.length) statements.push({
+        sql: 'INSERT INTO categories (id, name, description, parent_id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        params: [id, name, null, null, question.user_id, question.created_at, question.updated_at],
+      });
+      statements.push({
+        sql: 'INSERT INTO questions (id, title, content, answer, explanation, difficulty, category_id, user_id, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        params: [question.id, question.title, question.content, question.answer, question.explanation,
+          question.difficulty, id, question.user_id, question.tags, question.created_at, question.updated_at],
+      });
+      return { statements, result: { categoryId: id, created: !categories.length } };
+    };
+    // Resolve/create the category and insert its question together: failures leave no empty category.
+    if (this.sqliteDb) {
+      const database = this.sqliteDb;
+      return database.transaction(() => {
+        const change = prepare(database.prepare(select).all(question.user_id, name) as Category[]);
+        for (const statement of change.statements) database.prepare(statement.sql).run(...statement.params);
+        return change.result;
+      })();
+    }
+    if (!this.mysqlPool) throw new Error('Database not connected');
+    const connection = await this.mysqlPool.getConnection();
+    try {
+      await connection.beginTransaction();
+      // Serialize concurrent named imports for one library, including initially absent categories.
+      await connection.execute('SELECT id FROM users WHERE id = ? FOR UPDATE', [question.user_id]);
+      const [rows] = await connection.execute<mysql.RowDataPacket[]>(`${select} FOR UPDATE`, [question.user_id, name]);
+      const change = prepare(normalizeMySQLRows<Category>(rows));
+      for (const statement of change.statements) await connection.execute(statement.sql, normalizeMySQLParams(statement.params, statement.sql));
+      await connection.commit();
+      return change.result;
+    } catch (error) { await connection.rollback(); throw error; }
+    finally { connection.release(); }
+  }
+
   async getQuestionById(id: string): Promise<Question | undefined> {
     return this.get<Question>('SELECT * FROM questions WHERE id = ?', [id]);
   }
