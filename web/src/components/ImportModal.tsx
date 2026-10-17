@@ -4,32 +4,30 @@ import { toast } from 'react-hot-toast';
 import { importApi } from '@/api';
 import { Category, ImportPreview, ImportResult } from '@/types';
 
-const AI_IMPORT_PROMPT_TEMPLATE = `请按 JSON 返回一组适合记忆背题的题目，不要输出任何解释性文字。
+const UNCATEGORIZED_SELECTION = '__uncategorized__';
+const AI_IMPORT_PROMPT_TEMPLATE = `请生成适合记忆背题的题库，只返回合法 JSON，不要输出解释或 Markdown 围栏。
 
 要求：
-1. 返回格式必须是 JSON 数组
-2. 每一项包含 title、content、answer、explanation、difficulty
-3. difficulty 只能是 easy、medium、hard
-4. answer 要准确、简洁、利于记忆
-5. explanation 用于背题时快速理解
+1. 返回 formatVersion: 2、categories 和 questions；按知识领域合理分类。
+2. categories 每项包含 id（文件内唯一引用键）和 name（分类名称）。不要编造服务端数据库 UUID。
+3. 每道题包含 title、content、answer、explanation、difficulty、categoryId；categoryId 引用 categories 的 id。
+4. 无法确定分类时 categoryId 为 null；不需要分类时 categories 为 []。
+5. difficulty 只能是 easy、medium、hard；答案准确，解释清晰，代码保留缩进和换行。
+6. 不生成重复题，不编造个人经历或业绩；入库前由我确认。
 
 示例：
-[
-  {
+{
+  "formatVersion": 2,
+  "categories": [{ "id": "web", "name": "Web基础" }],
+  "questions": [{
     "title": "HTTP 常见状态码",
     "content": "说出 200、301、404、500 的含义。",
     "answer": "200 成功；301 永久重定向；404 资源不存在；500 服务器内部错误。",
-    "explanation": "这几个状态码是 Web 开发最常见的排障基础。",
-    "difficulty": "easy"
-  },
-  {
-    "title": "什么是 Docker 镜像",
-    "content": "说明 Docker 镜像的含义。",
-    "answer": "Docker 镜像是用于创建容器的只读模板。",
-    "explanation": "答案和解析可在导入后补充。",
-    "difficulty": "easy"
-  }
-]`;
+    "explanation": "结合请求与响应上下文排查。",
+    "difficulty": "easy",
+    "categoryId": "web"
+  }]
+}`;
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -123,19 +121,21 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
     const sequence = ++requestSequence.current;
     try {
       let response;
+      const targetCategory = categoryId === UNCATEGORIZED_SELECTION ? undefined : categoryId || undefined;
+      const categoryMode = categoryId === UNCATEGORIZED_SELECTION ? 'uncategorized' as const : 'file' as const;
       if (importType === 'ai') {
         const parsed: unknown = JSON.parse(aiText.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && (parsed as { formatVersion?: unknown }).formatVersion === 2) {
-          response = await importApi.previewFile('json', new File([JSON.stringify(parsed)], '题库.json', { type: 'application/json' }), categoryId || undefined);
+          response = await importApi.previewFile('json', new File([JSON.stringify(parsed)], '题库.json', { type: 'application/json' }), targetCategory, categoryMode);
         } else {
           const questions = Array.isArray(parsed) ? parsed : (parsed as { questions?: unknown[] } | null)?.questions;
           if (!Array.isArray(questions)) throw new Error('AI 内容必须是 JSON 数组或包含 questions 数组');
-          response = await importApi.previewText(questions, categoryId || undefined);
+          response = await importApi.previewText(questions, targetCategory, categoryMode);
         }
       } else {
         if (!file) throw new Error('请选择文件');
         if (file.size > 10 * 1024 * 1024) throw new Error('文件不能超过 10 MB');
-        response = await importApi.previewFile(importType, file, categoryId || undefined);
+        response = await importApi.previewFile(importType, file, targetCategory, categoryMode);
       }
       if (sequence !== requestSequence.current) return;
       setPreview(response.data); setExcluded(new Set()); setResult(null);
@@ -230,11 +230,12 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, categories, 
               className="select-field w-full px-4 pr-10 py-3 text-gray-700 bg-gray-50 focus:bg-white cursor-pointer"
             >
               <option value="">按文件分类自动导入</option>
+              <option value={UNCATEGORIZED_SELECTION}>全部导入未分类</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            <p className="mt-2 text-sm text-gray-500">带分类 JSON 会自动创建缺失分类并归类题目，无需逐个导入。选择已有分类会把所有题目统一导入该分类。</p>
+            <p className="mt-2 text-sm text-gray-500">文件有分类名称时自动创建缺失分类；没有分类信息时进入未分类。也可统一选择已有分类或全部导入未分类。自动创建需要分类管理权限。</p>
           </div>
 
           {importType === 'ai' ? (

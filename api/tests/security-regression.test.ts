@@ -1246,6 +1246,70 @@ test('portable category import enforces management and category scope permission
   assert.equal((await db.getCategoriesByUserId(owner.user.id)).length, 0);
 });
 
+test('empty category metadata imports as uncategorized and explicit overrides rescue stale references', async () => {
+  const user = await createUser('empty-category-import', 'empty-category-import@example.com', 'Password123');
+  const auth = { Authorization: `Bearer ${user.token}` };
+  for (const categories of [undefined, null, []]) {
+    const bundle = { formatVersion: 2, categories, questions: [
+      { content: 'No category', answer: 'Answer' },
+      { content: 'Blank category', answer: 'Answer', categoryId: ' ', categoryName: ' ' },
+      { content: 'Null category', answer: 'Answer', categoryId: null, categoryName: null },
+    ] };
+    const preview = await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(bundle)), 'empty.json');
+    assert.equal(preview.body.valid, 3, JSON.stringify(preview.body));
+    assert.deepEqual(preview.body.categoriesToCreate, []);
+    assert.ok(preview.body.rows.every((row: {question: {categoryId: string | null}}) => row.question.categoryId === null));
+  }
+  const target = await app.post('/api/categories').set(auth).send({ name: '手动目标分类' });
+  const stale = { formatVersion: 2, categories: [], questions: [{ content: 'Broken reference', answer: 'Answer', categoryId: 'old-id' }] };
+  const invalid = await app.post('/api/import/preview/json').set(auth).attach('file', Buffer.from(JSON.stringify(stale)), 'stale.json');
+  assert.equal(invalid.status, 400); assert.match(invalid.body.error, /已有分类.*未分类/);
+  const overridden = await app.post('/api/import/preview/json').set(auth).field('categoryId', target.body.id)
+    .attach('file', Buffer.from(JSON.stringify(stale)), 'stale.json');
+  assert.equal(overridden.body.valid, 1); assert.equal(overridden.body.rows[0].question.categoryId, target.body.id);
+  const uncategorized = await app.post('/api/import/preview/json').set(auth).field('categoryMode', 'uncategorized')
+    .attach('file', Buffer.from(JSON.stringify(stale)), 'stale.json');
+  assert.equal(uncategorized.body.valid, 1); assert.equal(uncategorized.body.rows[0].question.categoryId, null);
+  const imported = await app.post(`/api/import/preview/${uncategorized.body.id}/commit`).set(auth).send({});
+  assert.equal(imported.body.success, 1); assert.equal(imported.body.categoriesCreated, 0);
+  assert.equal((await db.getQuestions(user.user.id)).questions[0].category_id, null);
+  const legacy = await app.post('/api/import/preview/text').set(auth)
+    .send({ questions: stale.questions, categoryMode: 'uncategorized' });
+  assert.equal(legacy.body.valid, 1);
+  const invalidMode = await app.post('/api/import/preview/text').set(auth).send({ questions: stale.questions, categoryMode: 'guess' });
+  assert.equal(invalidMode.status, 400);
+  const current = (await db.getUserById(user.user.id))!;
+  await db.updateUser(user.user.id, { user_type: 'integrated', library_owner_id: user.user.id, category_scopes: [target.body.id], permissions: current.permissions });
+  const restricted = await app.post('/api/import/preview/text').set(auth).send({ questions: stale.questions, categoryMode: 'uncategorized' });
+  assert.equal(restricted.body.valid, 0); assert.match(restricted.body.rows[0].error, /已授权分类/);
+});
+
+test('actual AI batch output imports with no categories or a new named category without losing answers', async t => {
+  const user = await createUser('ai-category-import', 'ai-category-import@example.com', 'Password123');
+  const auth = { Authorization: `Bearer ${user.token}` };
+  const { aiService } = await import('../src/services/ai.js');
+  const prior = await db.getSetting('ai_enabled');
+  await db.setSetting('ai_enabled', 'true');
+  t.mock.method(aiService, 'getProvider', async () => ({ chat: async () => JSON.stringify([
+    { title: 'AI 分类测试', content: '解释容器隔离', answer: '第一行\n```bash\necho "$HOME"\n```', explanation: '参考解析', difficulty: 'easy' },
+  ]) } as any));
+  try {
+    const generated = await app.post('/api/ai/batch-generate').set(auth).send({ topic: '容器隔离', count: 1 });
+    assert.equal(generated.status, 200, JSON.stringify(generated.body));
+    assert.equal((await db.getQuestions(user.user.id)).total, 0);
+    assert.equal((await db.getCategoriesByUserId(user.user.id)).length, 0);
+    const plain = await app.post('/api/import/text').set(auth).send({ questions: generated.body.questions });
+    assert.equal(plain.body.success, 1); assert.equal(plain.body.categoriesCreated, 0);
+    const named = await app.post('/api/import/text').set(auth)
+      .send({ questions: generated.body.questions.map((q: object) => ({ ...q, categoryName: 'AI 生成的新分类' })) });
+    assert.equal(named.body.success, 1); assert.equal(named.body.categoriesCreated, 1);
+    const stored = (await db.getQuestions(user.user.id)).questions;
+    assert.ok(stored.every(question => question.answer === generated.body.questions[0].answer && question.explanation === generated.body.questions[0].explanation));
+    assert.equal(stored.filter(question => question.category_id === null).length, 1);
+    assert.equal((await db.getCategoriesByUserId(user.user.id))[0].name, 'AI 生成的新分类');
+  } finally { await db.setSetting('ai_enabled', prior ?? 'true'); }
+});
+
 test('malformed portable files, ambiguous names and failed question writes do not create categories', async () => {
   const owner = await createUser('bundle-invalid', 'bundle-invalid@example.com', 'Password123');
   const auth = { Authorization: `Bearer ${owner.token}` };

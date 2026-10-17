@@ -13,10 +13,11 @@ export interface ImportRow { row: number; question?: ImportQuestion; error?: str
 export class ImportInputError extends Error {}
 export const MAX_IMPORT_ROWS = 10000;
 const categoryNameSchema = z.string().trim().min(1, '分类名称不能为空').max(100, '分类名称不能超过 100 字');
-function portableRecords(parsed: Record<string, unknown>): unknown[] {
+function portableRecords(parsed: Record<string, unknown>, overrideCategories: boolean): unknown[] {
   const bundle = z.object({
     formatVersion: z.literal(2),
-    categories: z.array(z.object({ id: z.string().trim().min(1).max(100), name: categoryNameSchema })).max(1000),
+    categories: z.preprocess(value => value == null ? [] : value,
+      z.array(z.object({ id: z.string().trim().min(1).max(100), name: categoryNameSchema })).max(1000)),
     questions: z.array(z.unknown()).max(MAX_IMPORT_ROWS),
   }).safeParse(parsed);
   if (!bundle.success) throw new ImportInputError('带分类 JSON 格式错误：需要 formatVersion: 2、categories（id/name）和 questions 数组');
@@ -29,20 +30,22 @@ function portableRecords(parsed: Record<string, unknown>): unknown[] {
   return bundle.data.questions.map((record, index) => {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return record;
     const question = record as Record<string, unknown>;
-    if (question.categoryId == null || question.categoryId === '') {
-      return { ...question, categoryId: null, categoryName: undefined };
+    if (overrideCategories) return { ...question, categoryId: null, categoryName: undefined };
+    const reference = typeof question.categoryId === 'string' ? question.categoryId.trim() : question.categoryId;
+    if (reference == null || reference === '') {
+      return { ...question, categoryId: null };
     }
-    if (typeof question.categoryId !== 'string' || !names.has(question.categoryId)) {
-      throw new ImportInputError(`第 ${index + 1} 道题引用了文件中不存在的分类`);
+    if (typeof reference !== 'string' || !names.has(reference)) {
+      throw new ImportInputError(`第 ${index + 1} 道题引用了文件中不存在的分类；请补充分类名称，或选择统一导入到已有分类 / 未分类后重新解析`);
     }
-    return { ...question, categoryId: null, categoryName: names.get(question.categoryId) };
+    return { ...question, categoryId: null, categoryName: names.get(reference) };
   });
 }
 const schema = z.object({
   title: z.string().trim().min(1, '标题不能为空').max(500, '标题不能超过 500 字'),
   content: z.string().refine(value => value.trim().length > 0, '题目内容不能为空'),
   answer: z.string().max(50000, '答案不能超过 50000 字'),
-  explanation: z.string(), categoryId: z.string().nullable(),
+  explanation: z.string(), categoryId: z.string().trim().nullable().transform(value => value || null),
 });
 function difficulty(value: unknown) {
   if (value == null || value === '') return { value: 'medium' as const };
@@ -80,7 +83,7 @@ function markdownRecords(text: string): Record<string, unknown>[] {
   save();
   return records.map(record => ({ ...record, content: String(record.content).trim() || record.title, answer: String(record.answer).trim(), explanation: String(record.explanation).trim() }));
 }
-export function parseImportRecords(format: ImportFormat, input: unknown): unknown[] {
+export function parseImportRecords(format: ImportFormat, input: unknown, overrideCategories = false): unknown[] {
   try {
     let records: unknown;
     if (format === 'csv') records = parse(String(input).replace(/^\uFEFF/, ''), { columns: true, skip_empty_lines: true, trim: true });
@@ -88,7 +91,7 @@ export function parseImportRecords(format: ImportFormat, input: unknown): unknow
     else if (format === 'json') {
       const parsed = JSON.parse(String(input).replace(/^\uFEFF/, ''));
       if (parsed && !Array.isArray(parsed) && (parsed.formatVersion === 2 || Object.hasOwn(parsed, 'categories'))) {
-        records = portableRecords(parsed);
+        records = portableRecords(parsed, overrideCategories);
       } else records = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.questions) ? parsed.questions : [parsed];
     } else records = input;
     if (!Array.isArray(records) || !records.length) throw new ImportInputError('没有识别到题目，请检查文件格式');
@@ -102,7 +105,7 @@ export function parseImportRecords(format: ImportFormat, input: unknown): unknow
 export async function validateImportCategory(user: User, ownerId: string, categoryId: string | null) {
   if (!categoryId) return hasCategoryScopeAccess(user, null) ? undefined : '导入题目必须选择已授权分类';
   const category = await db.getCategoryById(categoryId);
-  if (!category || category.user_id !== ownerId) return '分类不存在或不属于当前题库';
+  if (!category || category.user_id !== ownerId) return '分类不存在或不属于当前题库；请补充分类名称，或选择已有分类 / 未分类后重新解析';
   return hasCategoryScopeAccess(user, categoryId) ? undefined : '没有该分类的导入权限';
 }
 export function canCreateImportCategory(user: User): boolean {
@@ -120,9 +123,11 @@ export async function resolveImportCategoryName(user: User, name: string): Promi
   if (!canCreateImportCategory(user)) throw new Error(`缺少分类“${name}”：需要分类管理权限，且不能超出分类授权范围`);
   return null;
 }
-export async function prepareImport(user: User, format: ImportFormat, input: unknown, targetCategory: unknown): Promise<ImportRow[]> {
+export async function prepareImport(user: User, format: ImportFormat, input: unknown, targetCategory: unknown, categoryMode: unknown = 'file'): Promise<ImportRow[]> {
   if (targetCategory != null && typeof targetCategory !== 'string') throw new ImportInputError('分类 ID 格式错误');
-  const records = parseImportRecords(format, input);
+  if (categoryMode !== 'file' && categoryMode !== 'uncategorized') throw new ImportInputError('分类导入方式无效');
+  const overrideCategories = categoryMode === 'uncategorized' || Boolean(targetCategory);
+  const records = parseImportRecords(format, input, overrideCategories);
   const categories = new Map<string | null, string | undefined>();
   const namedCategories = new Map<string, string | null>();
   const rows: ImportRow[] = [];
@@ -137,12 +142,14 @@ export async function prepareImport(user: User, format: ImportFormat, input: unk
       const data = schema.parse({
         title: q.title || q.标题 || (typeof content === 'string' ? content.slice(0, 100) : ''),
         content, answer, explanation: q.explanation ?? q.解析 ?? '',
-        categoryId: targetCategory || q.categoryId || q.category_id || q.分类ID || null,
+        categoryId: categoryMode === 'uncategorized' ? null : targetCategory || q.categoryId || q.category_id || q.分类ID || null,
       });
       const level = difficulty(q.difficulty ?? q.难度);
       if (level.warning) row.warnings.push(level.warning);
       if (!data.answer.trim()) row.warnings.push('答案为空');
-      const categoryName = !targetCategory && q.categoryName != null ? categoryNameSchema.parse(q.categoryName) : undefined;
+      const rawName = q.categoryName ?? q.category_name ?? q.分类名称 ?? q.分类;
+      const categoryName = !overrideCategories && rawName != null && !(typeof rawName === 'string' && !rawName.trim())
+        ? categoryNameSchema.parse(rawName) : undefined;
       if (categoryName) {
         if (!namedCategories.has(categoryName)) namedCategories.set(categoryName, await resolveImportCategoryName(user, categoryName));
         row.question = { ...data, categoryId: namedCategories.get(categoryName)!, categoryName, difficulty: level.value };

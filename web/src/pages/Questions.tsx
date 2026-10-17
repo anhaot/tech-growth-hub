@@ -831,7 +831,7 @@ export const QuestionsPage: React.FC = () => {
         isOpen={showAIGenerateModal}
         onClose={() => setShowAIGenerateModal(false)}
         categories={categories}
-        onSuccess={fetchQuestions}
+        onSuccess={() => { fetchQuestions(); fetchCategories(); }}
       />
 
       <DuplicateModal
@@ -1535,11 +1535,12 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
     difficulty: 'mixed' as 'easy' | 'medium' | 'hard' | 'mixed',
     mode: 'practice' as 'quick' | 'practice' | 'teaching',
     categoryId: '',
+    newCategoryName: '',
     requirements: '',
     provider: '',
   });
 
-  const categoryName = categories.find((category) => category.id === formData.categoryId)?.name || '';
+  const categoryName = categories.find((category) => category.id === formData.categoryId)?.name || formData.newCategoryName.trim();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1577,9 +1578,11 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
     answer: question.answer,
     explanation: question.explanation || '',
     difficulty: question.difficulty || 'medium',
+    categoryName: formData.categoryId ? undefined : formData.newCategoryName.trim() || undefined,
   });
 
   const handleGenerate = async () => {
+    if (loading || importing || importingIndex !== null) return;
     if (!formData.topic.trim()) {
       toast.error('请输入出题主题');
       return;
@@ -1610,6 +1613,7 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
   };
 
   const handleImportGenerated = async () => {
+    if (loading || importing || importingIndex !== null) return;
     if (generatedQuestions.length === 0) {
       toast.error('没有可导入的题目');
       return;
@@ -1622,9 +1626,12 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
         formData.categoryId || undefined
       );
 
-      toast.success(`成功导入 ${response.data.success} 道题目`);
-      onSuccess();
-      handleClose();
+      if (response.data.success) { toast.success(`成功导入 ${response.data.success} 道题目`); onSuccess(); }
+      if (response.data.failed) {
+        const failed = new Set(response.data.errors.map(error => error.row - 1));
+        setGeneratedQuestions(current => current.filter((_, index) => failed.has(index)));
+        toast.error(`有 ${response.data.failed} 道未导入：${response.data.errors[0]?.error || '请检查后重试'}`);
+      } else { setGeneratedQuestions([]); setRawResult(''); onClose(); }
     } catch (error: any) {
       toast.error(error.response?.data?.error || '导入失败');
     } finally {
@@ -1633,6 +1640,7 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
   };
 
   const handleImportSingle = async (question: GeneratedQuestion, index: number) => {
+    if (loading || importing || importingIndex !== null) return;
     setImportingIndex(index);
     try {
       const response = await importApi.importText(
@@ -1640,6 +1648,10 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
         formData.categoryId || undefined
       );
 
+      if (response.data.success !== 1) {
+        toast.error(response.data.errors[0]?.error || '题目未导入，请检查分类和权限');
+        return;
+      }
       toast.success(`成功导入 ${response.data.success} 道题目`);
       setGeneratedQuestions((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
       onSuccess();
@@ -1651,6 +1663,7 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
   };
 
   const handleClose = () => {
+    if (loading || importing || importingIndex !== null) return;
     setGeneratedQuestions([]);
     setRawResult('');
     onClose();
@@ -1767,6 +1780,8 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
               <label className="block text-sm font-medium text-gray-700 mb-2">导入分类</label>
               <select
                 value={formData.categoryId}
+                aria-label="AI 导入分类"
+                disabled={importing || importingIndex !== null}
                 onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
                 className="select-field w-full px-4 pr-10 py-3 bg-gray-50 text-gray-700 focus:bg-white cursor-pointer"
               >
@@ -1775,6 +1790,12 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
                   <option key={category.id} value={category.id}>{category.name}</option>
                 ))}
               </select>
+              {!formData.categoryId && <div className="mt-2">
+                <input aria-label="AI 新分类名称" value={formData.newCategoryName} maxLength={100} disabled={importing || importingIndex !== null}
+                  onChange={event => setFormData(current => ({ ...current, newCategoryName: event.target.value }))}
+                  placeholder="可填写新分类名称，确认入库时自动创建" className="input-field w-full px-4 py-3" />
+                <p className="mt-1 text-xs text-gray-500">留空则导入未分类；新建分类需要分类管理权限，生成题目时不会创建分类。</p>
+              </div>}
             </div>
 
             <div>
@@ -1791,7 +1812,7 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
             <div className="flex gap-3">
               <button
                 onClick={handleGenerate}
-                disabled={loading}
+                disabled={loading || importing || importingIndex !== null}
                 className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 bg-primary-600 rounded-lg text-white hover:bg-primary-700 transition-colors disabled:opacity-50"
               >
                 <Sparkles size={18} />
@@ -1820,7 +1841,7 @@ const AIGenerateModal: React.FC<AIGenerateModalProps> = ({ isOpen, onClose, cate
               </div>
               <button
                 onClick={handleImportGenerated}
-                disabled={importing || generatedQuestions.length === 0}
+                disabled={loading || importing || importingIndex !== null || generatedQuestions.length === 0}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all disabled:opacity-50"
               >
                 <Download size={16} />

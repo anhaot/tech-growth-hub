@@ -8,6 +8,8 @@
 
 技术成长站用于持续建设结构化技术题库，并把题目维护、AI 内容协作、分类管理、学习复习、用户权限和数据运维集中在一个系统中。它适用于运维、开发、测试、网络、安全等技术方向，也可以用于团队培训、面试题管理和个人知识库。
 
+分类为空、失效 ID 和 AI 入库行为见[分类导入说明](./docs/importing.md)。
+
 公开题库：[2026-10-17 版](./question-bank/2026-10-17/README.md)，共 178 道、16 个分类，提供可移植 JSON 和阅读版。导入前请备份，导入不会自动覆盖旧题。
 
 部署和安装前可查看[当前版本与升级判断](./docs/current-version.md)及[已知依赖告警](./docs/dependency-status.md)。
@@ -84,7 +86,7 @@ openssl rand -hex 32
 docker compose up -d --build
 ```
 
-应用镜像使用 `.env` 中的 `APP_VERSION`，格式为 `vYYMMDD-N`，例如 `v261017-1`。项目不会默认构建或发布 `latest` 标签。
+应用镜像使用 `.env` 中的 `APP_VERSION`，格式为 `vYYMMDD-N`，例如 `v261017-2`。项目不会默认构建或发布 `latest` 标签。
 
 访问 `http://127.0.0.1:10089`。默认管理员用户名和密码均为 `admin`，首次登录必须修改密码。生产环境还应启用 HTTPS、设置明确的 `ALLOWED_ORIGINS` 并建立定期备份。
 

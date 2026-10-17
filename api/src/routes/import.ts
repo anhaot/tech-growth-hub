@@ -94,7 +94,7 @@ for (const format of ['csv', 'json', 'markdown', 'text'] as const) {
       if (previews.size >= 8) { res.status(429).json({ error: '预览任务较多，请稍后重试' }); return; }
       preview = { id: randomUUID(), userId: req.user!.id, scope: scope(req.user!), expiresAt: Date.now() + PREVIEW_TTL, rows: [], state: 'preparing' };
       previews.set(preview.id, preview);
-      preview.rows = await prepareImport(req.user!, format, readInput(req, format), req.body.categoryId);
+      preview.rows = await prepareImport(req.user!, format, readInput(req, format), req.body.categoryId, req.body.categoryMode);
       preview.state = 'ready'; preview.expiresAt = Date.now() + PREVIEW_TTL;
       res.json(previewPage(preview));
     } catch (error) { if (preview) previews.delete(preview.id); sendError(res, error); }
@@ -102,7 +102,7 @@ for (const format of ['csv', 'json', 'markdown', 'text'] as const) {
   });
   // Keep existing integrations compatible; the UI uses the two-step preview flow.
   router.post(`/${format}`, ...(format === 'text' ? [] : [fileUpload]), async (req: AuthRequest, res: Response) => {
-    try { res.json(await importRows(req.user!, await prepareImport(req.user!, format, readInput(req, format), req.body.categoryId))); }
+    try { res.json(await importRows(req.user!, await prepareImport(req.user!, format, readInput(req, format), req.body.categoryId, req.body.categoryMode))); }
     catch (error) { sendError(res, error); }
     finally { removeUpload(req); }
   });

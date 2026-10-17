@@ -147,16 +147,17 @@ export const questionApi = {
 };
 
 export const importApi = {
-  previewFile: (format: 'csv' | 'json' | 'markdown', file: File, categoryId?: string) => {
+  previewFile: (format: 'csv' | 'json' | 'markdown', file: File, categoryId?: string, categoryMode?: 'file' | 'uncategorized') => {
     const data = new FormData(); data.append('file', file);
     if (categoryId) data.append('categoryId', categoryId);
+    if (categoryMode) data.append('categoryMode', categoryMode);
     return api.post<ImportPreview>(`/import/preview/${format}`, data, { headers: { 'Content-Type': 'multipart/form-data' } });
   },
-  previewText: (questions: unknown[], categoryId?: string) => api.post<ImportPreview>('/import/preview/text', { questions, categoryId }),
+  previewText: (questions: unknown[], categoryId?: string, categoryMode?: 'file' | 'uncategorized') => api.post<ImportPreview>('/import/preview/text', { questions, categoryId, categoryMode }),
   getPreview: (id: string, page: number) => api.get<ImportPreview>(`/import/preview/${id}`, { params: { page } }),
   commitPreview: (id: string, excludedRows: number[]) => api.post<ImportResult>(`/import/preview/${id}/commit`, { excludedRows }),
 
-  importText: (questions: Array<{ title: string; content: string; answer: string; explanation?: string; difficulty?: string }>, categoryId?: string) =>
+  importText: (questions: Array<{ title: string; content: string; answer: string; explanation?: string; difficulty?: string; categoryName?: string }>, categoryId?: string) =>
     api.post<ImportResult>('/import/text', { questions, categoryId }),
 };
 
