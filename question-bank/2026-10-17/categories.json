@@ -1,0 +1,82 @@
+[
+  {
+    "name": "服务网格与Envoy",
+    "file": "categories/01-服务网格与Envoy.json",
+    "count": 7
+  },
+  {
+    "name": "MLOps与Kubeflow",
+    "file": "categories/02-MLOps与Kubeflow.json",
+    "count": 5
+  },
+  {
+    "name": "Kubernetes网络与CNI",
+    "file": "categories/03-Kubernetes网络与CNI.json",
+    "count": 24
+  },
+  {
+    "name": "Kubernetes基础与工作负载",
+    "file": "categories/04-Kubernetes基础与工作负载.json",
+    "count": 24
+  },
+  {
+    "name": "Docker与容器",
+    "file": "categories/05-Docker与容器.json",
+    "count": 7
+  },
+  {
+    "name": "操作系统与主机运维",
+    "file": "categories/06-操作系统与主机运维.json",
+    "count": 12
+  },
+  {
+    "name": "网络与安全",
+    "file": "categories/07-网络与安全.json",
+    "count": 11
+  },
+  {
+    "name": "数据库与MySQL",
+    "file": "categories/08-数据库与MySQL.json",
+    "count": 14
+  },
+  {
+    "name": "中间件与分布式系统",
+    "file": "categories/09-中间件与分布式系统.json",
+    "count": 10
+  },
+  {
+    "name": "日志与Elasticsearch",
+    "file": "categories/10-日志与Elasticsearch.json",
+    "count": 9
+  },
+  {
+    "name": "监控与可观测性",
+    "file": "categories/11-监控与可观测性.json",
+    "count": 13
+  },
+  {
+    "name": "DevOps与自动化",
+    "file": "categories/12-DevOps与自动化.json",
+    "count": 13
+  },
+  {
+    "name": "云计算与虚拟化",
+    "file": "categories/13-云计算与虚拟化.json",
+    "count": 10
+  },
+  {
+    "name": "Python基础",
+    "file": "categories/14-Python基础.json",
+    "count": 3
+  },
+  {
+    "name": "面试表达与职业发展",
+    "file": "categories/15-面试表达与职业发展.json",
+    "count": 10
+  },
+  {
+    "name": "Web服务与负载均衡",
+    "file": "categories/16-Web服务与负载均衡.json",
+    "count": 6
+  }
+]

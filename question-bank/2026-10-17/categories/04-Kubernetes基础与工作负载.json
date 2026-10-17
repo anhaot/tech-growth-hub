@@ -1,0 +1,197 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "存活、就绪与启动探针",
+      "content": "livenessProbe、readinessProbe 和 startupProbe 有什么区别？如何避免错误探针扩大故障？",
+      "answer": "livenessProbe 检查容器是否需要重启，连续失败达到阈值后 kubelet 触发容器终止/重启，具体受重启策略等条件影响；readinessProbe 判断能否接收流量，失败使端点未就绪，普通 Service 通常不再选择它转发新请求。\nstartupProbe 为慢启动应用提供启动窗口；配置后在成功前不会执行 liveness/readiness 探针。失败达到阈值会按机制终止容器。\n探针要有轻量且符合业务的判断条件，并合理配置超时、周期和失败阈值。\n\nreadiness 不会断开全部已有连接。liveness 不宜把共享外部数据库暂时故障当作所有副本必须重启的条件，否则可能引发级联重启。探针端点应轻量并能反映相应状态。",
+      "explanation": "探针帮助恢复和流量管理，但不单独保证零中断。readiness 不等于断开所有既有连接，liveness 也不应把共享外部依赖故障直接当作全体容器必须重启的依据。",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod Phase 与容器状态",
+      "content": "Pod 的 Phase 有哪些？CrashLoopBackOff 是否是 Pod Phase？",
+      "answer": "Pod 的生命周期不能简单理解为每个 Pod 都按固定顺序经过所有状态。常见 Pod Phase：\n\n- Pending：Pod 已被接受，但尚未完成调度或至少一个容器尚未准备好运行。\n- Running：Pod 已绑定到节点，至少一个容器正在运行、启动中或重启中。\n- Succeeded：所有容器都成功终止，且不会再重启。\n- Failed：所有容器已终止，且至少一个容器失败终止。\n- Unknown：控制面无法获取 Pod 状态，常见于节点通信异常，不是正常终止阶段。\n\n`CrashLoopBackOff`、`ImagePullBackOff` 是 kubectl 展示的容器等待原因，不是 Pod Phase。排障应结合 `kubectl describe pod`、Events、容器状态、探针、退出码和日志。",
+      "explanation": "Pod Phase 是粗粒度生命周期字段，不是固定顺序的状态机。kubectl get pods 的 STATUS 列还可能展示 CrashLoopBackOff、Terminating 等原因，不能直接等同 status.phase；应结合容器状态、Conditions 和 Events 判断。",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "ConfigMap、Secret 与配置更新",
+      "content": "ConfigMap 和 Secret 有什么区别？更新后容器是否会立即读取新值？",
+      "answer": "ConfigMap 用于非敏感配置；Secret 用于密码、令牌、证书等敏感数据。Secret 的 base64 是编码，不能替代加密，应结合 RBAC、etcd 静态加密、传输保护和审计控制访问。\n\n二者都可通过环境变量或挂载文件提供给容器：\n\n- 环境变量在容器创建时取得，修改对象不会自动刷新已有容器的环境。\n- 普通投射卷的文件通常会在传播延迟后更新，应用还需支持重新读取；使用 subPath 挂载的文件不会自动更新。\n- immutable 对象不能直接修改数据，需使用新对象并更新工作负载引用。\n\n发布时可以使用版本化配置或配置摘要触发滚动更新。Secret 轮换应安排新旧凭证过渡、应用重新加载和撤销验证；不要把真实凭证写入镜像、Git 或日志。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod 级容器重启策略",
+      "content": "pod 的重启策略有哪几种",
+      "answer": "Pod 级 `restartPolicy` 有 Always、OnFailure、Never，默认是 Always。它主要控制 kubelet 如何在同一个 Pod、同一节点上重启已经退出的容器，而不是重新创建原 Pod 对象。\n\n- Always：容器无论成功还是失败退出都重启。\n- OnFailure：仅非零退出时重启。\n- Never：容器退出后不自动重启。\n\nDeployment/ReplicaSet 的 Pod 模板通常只允许 Pod 级 Always；Job 常用 OnFailure 或 Never。控制器在 Pod 丢失或失败时创建替代 Pod，与 kubelet 在原 Pod 内重启容器是两个层次。\n\n还需区分容器类型和版本：普通 init 容器、采用容器级 Always 的原生 sidecar，以及受特性门控影响的容器级重启策略/规则有各自语义，不能将 Pod 级三种策略无条件套用到全部容器。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "kubectl 与 kubelet 的职责",
+      "content": "kubectl 和 kubelet 有什么区别？用户可以使用 kubelet 吗？",
+      "answer": "kubectl 是与 Kubernetes API Server 交互的命令行客户端，常用于查询、创建和更新资源，权限由身份与 RBAC 等控制。\n\nkubelet 是节点代理，监视分配给本节点的 Pod 规格，并通过 CRI 运行时协调容器、探针、卷挂载和节点/Pod 状态上报。它不负责整个集群的调度，也不是简单只靠定时轮询执行 kubectl 命令。\n\n普通工作负载管理通常使用 kubectl/API；管理员还可管理 kubelet 配置、服务和受保护的 kubelet API，因此不能绝对说“用户不能使用 kubelet”。节点 API 应开启认证授权并限制访问。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 控制平面与节点组件",
+      "content": "K8s 里 master 有哪些核心组件，分别是做什么用的？",
+      "answer": "控制平面主要包含：\n\n- kube-apiserver：API 入口，进行认证、授权和准入，读写集群状态。\n- etcd：存储集群状态，访问应受保护并有备份恢复方案。\n- kube-scheduler：为尚未绑定节点的 Pod 选择节点。\n- kube-controller-manager：运行控制循环，使实际状态向期望状态收敛。\n- cloud-controller-manager：在相应云集成中管理云资源相关逻辑，不是所有集群都必需。\n\n节点主要运行 kubelet 和 CRI 容器运行时，并配置 CNI。Service 数据面可能由 kube-proxy 或替代实现提供；CoreDNS 等属于常见插件，而不是必须和每个控制平面组件放在同一进程。\n\n控制组件通常通过 API Server 交互，不能说所有组件都直接读写 etcd。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Deployment 与 StatefulSet 对比",
+      "content": "deployment 和 statefulset 有什么区别？",
+      "answer": "Deployment 主要管理无状态工作负载；StatefulSet 用于需要稳定身份、稳定网络标识和有序操作的工作负载。\n\n1. Pod 名称：Deployment Pod 通常为 `<deployment>-<replicaset-hash>-<suffix>`；StatefulSet 为 `<statefulset>-<ordinal>`，例如 web-0。\n2. 创建/缩容：Deployment 通常可并行；StatefulSet 默认按序创建、逆序缩容，也可配置 PodManagementPolicy。\n3. 网络身份：StatefulSet 常配合 Headless Service 提供稳定 DNS。\n4. 存储：StatefulSet 可通过 volumeClaimTemplates 为每个副本创建独立 PVC。Deployment 也能挂载 PVC，但删除一个 Deployment Pod 不会自动删除 PVC；需要区分 PV 回收策略和 StatefulSet PVC 保留策略。\n5. 更新：Deployment 与 StatefulSet 都支持滚动更新，但顺序、分区和可用性语义不同。\n\n数据库是否适合 StatefulSet 还取决于应用自身复制、存储和故障恢复能力。\n\nStatefulSet 默认滚动更新通常按序号从高到低推进，可用 partition 控制更新范围；有序启动策略与更新策略不能混为一谈。稳定名称不表示 Pod IP 不变，也不自动实现数据库高可用。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Deployment 手工扩容与 HPA",
+      "content": "如果原本一个 pod 是两个副本，我想要扩容成三个副本，如何操作？",
+      "answer": "扩容的是管理 Pod 的控制器副本数，例如 Deployment：\n\n```bash\nkubectl scale deployment demo -n default --replicas=3\n```\n\n也可以修改清单中的 `spec.replicas: 3` 后执行：\n\n```bash\nkubectl apply -f manifest.yaml\n```\n\n临时编辑可使用 `kubectl edit deployment demo -n default`。执行后通过 `kubectl rollout status deployment/demo -n default` 和 `kubectl get pods -n default` 验证。若配置了 HPA，手工副本数可能随后被 HPA 调整，应先确认控制关系。\n\n命令中的 demo/default/manifest.yaml 是示例资源、Namespace 和文件名，需按实际对象替换。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "PV、PVC、StorageClass 与 CSI",
+      "content": "Kubernetes 持久化存储包含哪些核心抽象？常见存储后端有哪些？",
+      "answer": "持久化存储的核心抽象：PV 表示集群卷，PVC 是工作负载的存储申请，StorageClass 定义动态供应器与参数，CSI 是存储驱动接口。驱动能力决定供应、附加、挂载、快照与扩容等是否可用。\n\n访问模式要准确理解：RWO 通常表示单节点读写，不是严格一个 Pod；RWOP 限制单 Pod，需支持的 CSI 与版本条件；RWX 为多节点读写，必须由后端支持。\n\n常见后端包括云块盘、Ceph/RBD、NFS、分布式文件存储和 Local PV。比较性能、拓扑、故障域、快照、扩容、回收策略和恢复能力；WaitForFirstConsumer 可让供应/绑定结合调度拓扑。\n\nLocal PV 需要 node affinity 等约束，节点故障不会自动把本地数据变成另一个节点的数据。数据库还需自身复制、备份恢复、容量与明确的 RPO/RTO；StatefulSet 并不替代这些能力。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "创建 Pod 的组件协作流程",
+      "content": "通过 Deployment 创建 Pod 时，API Server、控制器、Scheduler、kubelet 和运行时如何协作？",
+      "answer": "典型链路是：\n\n1. kubectl/客户端提交 Deployment，API Server 完成认证、授权与准入并持久化状态。\n2. Deployment 控制器管理 ReplicaSet，ReplicaSet 控制器创建所需 Pod；不是 Scheduler 直接创建 Deployment 的全部 Pod。\n3. Scheduler 为未调度 Pod 选择节点并提交绑定。\n4. 目标 kubelet 观察到 Pod，协调卷、镜像与 CRI 运行时；运行时创建 sandbox 并通过 CNI 完成网络，按 OCI 机制运行应用容器。\n5. kubelet 执行探针并上报状态；若有匹配的 Service，控制器维护 EndpointSlice 等服务端点。\n\n调度成功不意味着已经运行，网络/镜像/卷或应用启动仍可能失败。不同步骤可能异步交错，节点 agent 和控制器持续调和实际状态。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Pod sandbox、网络与存储",
+      "content": "Pod 的网络与存储分别由哪些组件协作管理？pause 容器起什么作用？",
+      "answer": "Pod 网络不是由 pause 容器“管理”的：\n\n- pause/infra 容器主要持有 Pod 共享的网络等 Linux namespace，其他业务容器加入这些 namespace。\n- kubelet 通过 CRI 与容器运行时协作，运行时调用 CNI 插件为 Pod 配置接口、IP、路由和清理网络。\n\nPod 存储由多个组件协作：\n\n- kubelet 根据 PodSpec 准备并挂载卷；\n- CSI 驱动及相关控制器完成卷供应、附加、挂载和扩容；\n- emptyDir 等临时存储、容器可写层和日志受到节点临时存储及垃圾回收策略影响。\n\n因此应区分“namespace 持有者”“网络配置者”和“存储生命周期管理者”。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 工作负载控制器",
+      "content": "K8S 控制器有哪些类型？区别是啥",
+      "answer": "常见工作负载控制器：\n\n- Deployment：通过 ReplicaSet 管理副本，支持 RollingUpdate 和 Recreate；滚动过程由 maxSurge/maxUnavailable 等配置决定，不保证每次都先增加新 Pod 再删除旧 Pod。\n- StatefulSet：稳定的名称、序号和网络身份，可为副本创建独立 PVC；默认有序行为可以按支持的策略配置。\n- DaemonSet：在符合条件的节点上维护实例，常用于网络、日志、监控代理。\n- Job：管理到完成为止的任务，可重试失败实例；CronJob 按时间创建 Job，并需考虑并发和幂等。\n- ReplicaSet：维持副本数，通常由 Deployment 管理。\n控制器重建 Pod 与 kubelet 在同一 Pod 内重启容器是不同层次。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "专用节点、亲和性与污点",
+      "content": "deployment 的 pod 我想指定在某个节点运行该怎么做？如果不想要其它 pod 在上面运行要怎么做？",
+      "answer": "用标签配合 nodeSelector 或 required nodeAffinity 限定节点，再用污点阻止普通 Pod 调度：\n\n```bash\nkubectl label node worker-01 dedicated=study\nkubectl taint node worker-01 dedicated=study:NoSchedule\n```\n将下面片段合入完整 Deployment 资源（不是独立可提交清单）：\n\n```yaml\nspec:\n  template:\n    spec:\n      nodeSelector:\n        dedicated: study\n      tolerations:\n        - key: dedicated\n          operator: Equal\n          value: study\n          effect: NoSchedule\n```\nnodeSelector 限定能去哪；toleration 只是允许容忍污点，不保证一定调度到该节点。NoSchedule 不驱逐已有 Pod，其他同样具有容忍度的 Pod 仍可进入，系统 DaemonSet 也要按其实际容忍配置检查。\n\nworker-01 是示例节点名，修改标签/污点前核对真实节点与影响。上述 YAML 是工作负载模板片段，需合入完整资源；对已运行 Pod 的影响与调度约束应另行验证。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Pod 与单个容器的区别",
+      "content": "你对 K8S 是如何理解的？K8S 的 pod 和 docker 容器的区别在哪",
+      "answer": "Kubernetes 是声明式容器编排平台，负责部署、调度、自愈、扩缩容、服务发现和发布。\n\nPod 与单个容器的区别：\n\n1. Pod 是 Kubernetes 的基本调度单位，可包含一个或多个紧密协作的容器。\n2. 同一 Pod 中的容器共享网络 namespace 和 Pod IP，可通过 `localhost` 通信，也可共享卷。\n3. 容器是由运行时启动的进程隔离环境；Pod 还包含调度、重启策略、探针、卷和网络等编排语义。\n4. kubelet可在同一 Pod 内重启容器；控制器则可在 Pod 丢失时创建替代 Pod。\n5. 传统资源 requests/limits 主要配置在每个容器上，调度时按 Pod 中容器需求聚合；较新版本还可能提供版本受限的 Pod 级资源功能，回答时应说明版本。\n\nDocker 只是容器工具/运行时生态之一，不应与 Pod 做完全同层级比较。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Deployment 镜像更新与回滚",
+      "content": "由 Deployment 管理的应用如何更新镜像、验证发布并回滚？滚动更新是否总是先增后删？",
+      "answer": "先确认工作负载由哪个控制器管理，准备带固定版本或 digest 的镜像，并核对镜像拉取权限、资源容量、探针以及新旧应用和数据库兼容性。\n\n1. 更新 Deployment 的 Pod 模板镜像。API Server 保存声明后，Deployment 控制器创建或复用相应 ReplicaSet，由 ReplicaSet 控制器创建 Pod。\n2. Scheduler 为新 Pod 选择节点，kubelet 通过容器运行时拉取镜像并启动容器；调度成功不代表应用已就绪。\n3. 默认 RollingUpdate 根据 maxSurge、maxUnavailable 和可用状态调整新旧 ReplicaSet，不能保证每次都先增加新 Pod 再删除旧 Pod。Recreate 策略则先终止旧 Pod。\n4. 通过 rollout status、Pod Events、readiness、日志及真实业务指标验证。minReadySeconds 可规定就绪持续时间；应用还需处理终止、连接排空和重试。\n\n```bash\nkubectl set image deployment/demo app=registry.example.com/demo:1.1 -n default\nkubectl rollout status deployment/demo -n default --timeout=120s\nkubectl rollout history deployment/demo -n default\n# 仅在确认需要回退且保留了上一修订时执行\nkubectl rollout undo deployment/demo -n default\nkubectl rollout status deployment/demo -n default --timeout=120s\n```\n\ndemo、app、default 和镜像地址均为示例，需要先核对真实资源和容器名。超时或 ProgressDeadlineExceeded 不会自动触发应用回滚；GitOps 环境还需同步声明源。rollout undo 回退 Pod 模板，不会恢复数据库、已改写的数据或所有外部配置；不可变配置和完整备份需独立管理。",
+      "explanation": "Deployment 调整 ReplicaSet，ReplicaSet 管理 Pod；更新顺序由策略和可用性约束决定。发布与回退都要验证实际业务，不能只看命令返回。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "API Server 与 etcd 端口",
+      "content": "像 apiserver 的端口和 etcd 的端口记得吗",
+      "answer": "默认 apiserver 的端口是 6443（HTTPS），etcd 的端口是 2379（客户端通信端口），2380（etcd 集群节点间通信端口）。\n\n这些是默认值，可受实际配置影响。API Server、etcd 客户端与 peer 接口承担不同职责，不能把 etcd 暴露为普通公网数据库；应核对 TLS、身份、监听地址与网络访问范围。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "HPA、VPA 与节点扩缩容",
+      "content": "K8S 的自动扩缩容是如何实现的？有实际运用过缩容吗",
+      "answer": "扩缩容分为工作负载副本、容器资源和节点三个层次：\n\n- HPA 根据资源、自定义或外部指标调整副本。CPU utilization 通常以 requests 为分母，需要合理 requests 与指标服务；配置 min/max、稳定窗口和速率策略，避免抖动和缩容过快。\n- VPA 给出或应用资源建议，是否驱逐重建或支持原地调整取决于版本、模式和条件，不是无条件修改全部 requests/limits。\n- 节点自动扩缩容为不可调度 Pod 增加资源，并在满足调度、驱逐和其他约束后回收节点；PDB 常影响节点 drain/驱逐。\n\nHPA 降低 Deployment 副本数不直接受 PDB 保护，缩容可用性需通过 HPA 行为、最小副本、终止处理和应用设计保障。监控队列、错误和业务效果，验证峰值扩容与低谷缩容。\n\n个人经历只填写真实指标、配置、问题和结果，实验与生产明确区分。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Pod Pending 分阶段排查",
+      "content": "一个 pod 处于 pending 状态有哪几种可能？",
+      "answer": "Pod 显示 Pending 时，应先看 `kubectl describe pod <pod> -n <namespace>` 的 Events，再按阶段判断：\n\n1. 调度失败：CPU/内存不足、污点未容忍、亲和性/节点选择器不满足、端口或拓扑约束冲突。\n2. 存储未就绪：PVC 未绑定、CSI 挂载失败或卷拓扑不满足。\n3. Pod sandbox/CNI：网络插件异常、地址耗尽、创建 sandbox 失败。\n4. 镜像与容器准备：镜像拉取失败、鉴权失败等情况下 Pod Phase 可能仍是 Pending，但要查看具体容器 Waiting 原因。\n5. 节点问题：节点 NotReady、kubelet 或容器运行时异常。\n\n启动命令执行后反复退出通常表现为容器 `CrashLoopBackOff`，不应与“无法调度的 Pending”混为一谈。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "kubelet 停止的影响",
+      "content": "一个 Node 节点的 kubelet 挂了，会有什么影响？",
+      "answer": "kubelet 停止后，已经运行的容器通常仍由运行时继续执行，并不会立即全部退出。但该节点无法正常执行新的 Pod 生命周期操作、探针、状态上报和容器重启管理。\n控制面在节点心跳/Lease 超过容忍时间后，由节点控制器更新 Ready 条件（失联常表现为 Unknown，命令行可能显示 NotReady），并添加相关污点。新 Pod 的调度和已有 Pod 的驱逐取决于状态、污点、容忍时间及控制器策略，不是立即迁走全部 Pod。\nkube-proxy 是独立组件，kubelet 停止不必然使已存在的 Service 转发规则失效。恢复时检查 kubelet、运行时、证书和网络，并验证节点及业务状态。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 学习路径与实验验证",
+      "content": "请列举学习 Kubernetes（K8s）的主要途径，并说明每种途径的特点与适用场景。",
+      "answer": "先明确目标 Kubernetes 版本，学习 API 资源、控制器调和、调度、网络、存储与权限，再在受控实验环境验证。\n\n实践顺序可为：部署应用与配置 → 探针和 Service → 发布回滚 → PVC/CSI → RBAC 与 NetworkPolicy → 指标/日志/追踪 → 故障诊断与备份恢复 → 升级、容量和高可用。\n\n使用对应版本官方文档，保存配置与实验记录，主动复现 Pending、镜像拉取、DNS/网络、卷和探针故障。学习成果用可运行配置、排障过程、恢复演练与讲解验证，而不是只背命令或统计课程时长。个人经历填写实际完成的实验或生产任务。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 故障案例的真实表达",
+      "content": "K8S 集群维护遇到过什么问题，如何解决的？",
+      "answer": "这道题必须使用本人真实故障案例，建议按“现象—影响—证据—根因—处理—复盘”回答。\n\n可参考的排障结构：\n\n1. 先说明影响范围和告警现象，例如节点 NotReady、Pod 无法调度、DNS/网络异常或控制面延迟。\n2. 给出使用过的证据：Events、组件日志、etcd/kubelet/CNI 指标、网络抓包或时间线。\n3. 区分直接原因和根因，并说明为何排除其他可能。\n4. 描述止损、恢复、验证和回滚。\n5. 给出后续改进，例如告警、容量、变更流程、备份和演练。\n\n不要虚构“etcd 脑裂”。仅仅网络延迟并不等于脑裂，盲目增加 etcd 成员或调整心跳也可能降低稳定性。没有生产案例时，应明确说明做过哪些实验或演练。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 安装前置条件",
+      "content": "服务器准备安装 K8S 需要设置哪些参数优化",
+      "answer": "安装 Kubernetes 前应以目标版本、发行版、CNI、容器运行时和 kube-proxy 模式的官方要求为准：\n\n1. 配置主机名、DNS、时间同步、证书时间和稳定网络。\n2. 安装并配置 CRI 运行时，核对 cgroup driver。\n3. 配置 IP 转发及 CNI 所需内核模块/sysctl；桥接 netfilter 参数是否需要取决于数据平面。\n4. Swap 应按 Kubernetes 版本和 NodeSwap 配置决定，不能脱离版本一律关闭。\n5. 只有使用 IPVS 模式才需要相应 IPVS 内核模块；当前还可能使用 iptables/nftables。\n6. 不应直接关闭防火墙，应按控制面、节点、CNI 和业务需要开放最小端口并验证规则。\n7. 规划 Pod/Service CIDR、MTU、磁盘、日志、内核版本和资源预留。\n\n变更前保存基线和回滚方法，安装后运行健康和网络连通性测试。\n\n优先核对 cgroup v2 和运行时/kubelet 驱动一致性：从 Kubernetes 1.35 起，默认配置对 cgroup v1 的兼容约束更严格，应按目标版本安装要求处理。IPVS 从 1.35 起弃用，新部署先评估受支持模式，不能照旧教程无条件加载 IPVS 并关闭所有保护。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "kubeconfig、令牌与凭证管理",
+      "content": "Kubectl 如何存储一个 token 凭证？",
+      "answer": "kubectl 默认读取 `~/.kube/config`，也可通过 `KUBECONFIG` 或 `--kubeconfig` 指定文件。令牌属于 users 条目中的 user，而不是 auth-provider 的通用替代写法：\n\n```yaml\napiVersion: v1\nkind: Config\nclusters:\n  - name: example\n    cluster:\n      server: https://api.example.com:6443\n      certificate-authority: /path/to/ca.crt\nusers:\n  - name: example-user\n    user:\n      token: REPLACE_WITH_VALID_TOKEN\ncontexts:\n  - name: example-context\n    context:\n      cluster: example\n      user: example-user\ncurrent-context: example-context\n```\n示例值需要按集群替换。配置文件按敏感凭证保护；优先使用集群支持的 exec 凭证插件或短期令牌，过期后续签，避免长期明文令牌和跳过 TLS 验证。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 的价值与适用边界",
+      "content": "k8s 的优势是什么",
+      "answer": "Kubernetes 的主要价值包括声明式部署、自愈、滚动发布、服务发现、弹性伸缩、资源调度和可扩展 API。\n\n需要避免两个过度表述：\n\n1. Kubernetes 不会天然提高所有应用的资源利用率，效果取决于 requests/limits、调度、弹性策略和工作负载特征。\n2. Namespace 主要提供命名和管理边界，不等于完整的多租户安全隔离。多租户还需要 RBAC、NetworkPolicy、ResourceQuota、LimitRange、Pod Security、节点/运行时隔离和审计等措施。\n\n回答时可结合业务规模说明使用 Kubernetes 带来的收益与新增的复杂度。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Envoy 核心对象与请求处理链路",
+      "content": "Envoy 中 Listener、Filter、Route、Cluster 和 Endpoint 分别有什么作用？一个 HTTP 请求如何经过这些对象？",
+      "answer": "Envoy 的关键对象不应只背成固定的“三个组件”。\n\n- Listener 监听地址和端口，根据匹配条件选择网络过滤器链。\n- Network Filter 处理连接层数据；HTTP Connection Manager（HCM）是将 HTTP 连接交给 HTTP 处理链的网络过滤器。\n- HTTP Filter 可以执行认证、限流、路由等处理；router filter 按路由结果向上游转发。\n- Route 配置通过域名、路径、请求头等条件选择上游 Cluster，也可设置重试和超时。\n- Cluster 描述逻辑上游服务、负载均衡和连接配置；Endpoint 是该服务的具体地址。\n\n典型流程是：客户端连接 → Listener/网络过滤器链 → HCM/HTTP 过滤器 → 路由匹配 → Cluster 选择健康 Endpoint → 上游响应。配置可来自静态文件或 xDS。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Envoy xDS 动态配置",
+      "content": "Envoy 通过 xDS 协议动态配置，其中 LDS、RDS、CDS、EDS 分别代表什么？",
+      "answer": "xDS 是 Envoy 的动态发现 API 集合：\n\n- LDS（Listener Discovery Service）：Listener。\n- RDS（Route Discovery Service）：HTTP 路由。\n- CDS（Cluster Discovery Service）：上游 Cluster。\n- EDS（Endpoint Discovery Service）：具体上游端点。\n\n支持的传输包括 REST/gRPC；gRPC 有 State-of-the-World 与 Delta 形式，ADS 可在流中聚合资源。控制平面需要处理版本、ACK/NACK、资源依赖和验证；不能一概承诺所有字段都无条件热更新。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Istio 控制平面与数据平面",
+      "content": "请详细列出 Istio 架构中的核心组件（控制平面和数据平面），并分别说明每个组件的主要职责和作用。",
+      "answer": "现代 Istio 通常分控制平面与数据平面。istiod 提供服务发现、配置验证/分发以及证书和身份相关能力，经 xDS 等协议配置代理。\nsidecar 模式以工作负载旁的 Envoy 及入口/出口网关执行流量策略；ambient 模式使用 ztunnel 提供基础 L4 连接与安全，可按需要增加基于 Envoy 的 waypoint 处理 L7 能力。\nPilot、Citadel、Galley 的历史独立部署职责逐步整合到 istiod；Mixer 是已移除的旧组件，不应列为当前必备组件。是否纳入网格及哪些流量被治理，取决于模式、注册和配置，不能说默认拦截所有服务的全部流量。",
+      "explanation": "控制平面下发配置和身份，数据平面处理实际业务流量。现代架构不等于“Envoy 唯一数据组件 + Pilot/Mixer/Citadel 三个独立控制组件”；回答旧版本时需明确历史范围。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Istio Gateway 资源与入口网关",
+      "content": "Istio 的 Gateway 配置资源与实际 Ingress Gateway 工作负载有什么区别？",
+      "answer": "以 Istio API `networking.istio.io/v1` 为例，Gateway 资源声明入口监听配置：`spec.selector` 选择网关工作负载，`servers` 定义端口、协议、域名和 TLS 参数。\n\nIngress Gateway 通常是运行 Envoy 的 Deployment/Pod，通过 Service 对外暴露；它才处理实际连接。Gateway 对象本身不会自动创建一个可用的公网负载均衡器。\n\nVirtualService 绑定 Gateway，定义 HTTP/TCP 路由；DestinationRule 可定义上游子集与连接策略。认证、授权等还需相应策略，不能认为创建 Gateway 就完成了全部安全控制。\n\nKubernetes Gateway API 的 `gateway.networking.k8s.io` 是另一组资源体系，字段和控制器行为不能与 Istio Gateway 混写。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Ingress 与 Istio 入口网关的区别",
+      "content": "Kubernetes 原生 Ingress 与 Istio Ingress Gateway 的核心区别是什么？",
+      "answer": "Kubernetes Ingress 是 HTTP/HTTPS 入口路由 API，依赖 Controller 执行；标准字段主要覆盖主机、路径和 TLS，扩展能力由具体控制器提供，不能因此断言实现只会基础路由。\nIstio Ingress Gateway 是代理工作负载，可由 Istio Gateway、VirtualService、DestinationRule 或支持的 Gateway API 配置监听、路由及连接策略，支持按配置处理 HTTP/TCP/TLS 等流量。\n二者不是同层对象。Istio 网关可用于入口治理，并不要求所有应用都注入 sidecar；当前控制面为 istiod，旧 Pilot/Citadel 独立组件应作为历史说明。\n按入口需求、维护成本、已有平台与策略能力选择，不把“更强大”作为无条件结论。",
+      "explanation": "区分配置 API、控制器/控制面与实际转发代理。功能是否生效取决于版本及配置，Kubernetes Ingress 控制器也可能提供丰富扩展。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Istio 10% 金丝雀流量配置",
+      "content": "在 Istio 中，如何通过 Ingress Gateway 实现将 10% 流量路由到新版本服务的金丝雀发布？",
+      "answer": "前提：服务 `demo` 的 v1、v2 Pod 已运行，分别带有 `app: demo` 与 `version: v1/v2` 标签；Service 的 selector 选择两个版本且服务端口为 80。示例中的网关、Service 和路由资源位于 `default` Namespace，实际入口网关需要存在且匹配 selector。\n\n```yaml\napiVersion: networking.istio.io/v1\nkind: Gateway\nmetadata:\n  name: demo-gateway\n  namespace: default\nspec:\n  selector:\n    istio: ingressgateway\n  servers:\n    - port:\n        number: 80\n        name: http\n        protocol: HTTP\n      hosts:\n        - demo.example.com\n---\napiVersion: networking.istio.io/v1\nkind: DestinationRule\nmetadata:\n  name: demo\n  namespace: default\nspec:\n  host: demo.default.svc.cluster.local\n  subsets:\n    - name: v1\n      labels:\n        version: v1\n    - name: v2\n      labels:\n        version: v2\n---\napiVersion: networking.istio.io/v1\nkind: VirtualService\nmetadata:\n  name: demo\n  namespace: default\nspec:\n  hosts:\n    - demo.example.com\n  gateways:\n    - demo-gateway\n  http:\n    - route:\n        - destination:\n            host: demo.default.svc.cluster.local\n            subset: v1\n            port:\n              number: 80\n          weight: 90\n        - destination:\n            host: demo.default.svc.cluster.local\n            subset: v2\n            port:\n              number: 80\n          weight: 10\n```\n\n域名、集群 DNS 后缀和网关标签需按环境替换；公网生产入口还需配置 TLS、DNS 和入口 Service。检查两个子集的可用端点，再以足够样本验证请求分布、错误率和延迟。权重是统计分流目标，不能要求每十个请求恰好一个命中新版本。异常时把 v2 权重降为 0，并核对数据库和会话兼容性。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Istio 外部请求流转路径",
+      "content": "请描述一个外部请求在 Istio 环境中到达目标服务的完整流量流转路径。",
+      "answer": "以 Istio sidecar 模式及传统 Istio API 为例：外部请求进入 Ingress Gateway 的 Envoy；Gateway 配置监听协议、端口和主机，VirtualService 匹配请求并选择目标服务/子集与权重；DestinationRule 定义子集标签和目标连接/负载均衡策略，网关代理转发到选中的工作负载，已纳入网格的目标 sidecar 再交给应用。\nGateway/VirtualService/DestinationRule 是配置资源，不是请求需要逐个经过的独立进程。未注入 sidecar 的目标和 ambient 模式具有不同数据路径。",
+      "explanation": "VirtualService 决定路由目标，DestinationRule 描述目标子集及连接策略。sidecar 注入需要匹配配置和条件，不是所有 Pod 自动注入；ambient 使用 ztunnel 和可选 waypoint，不能用固定 sidecar 链路代表全部 Istio 部署。",
+      "categoryId": null,
+      "difficulty": "hard"
+    }
+  ]
+}

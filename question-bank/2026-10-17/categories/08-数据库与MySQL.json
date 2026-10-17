@@ -1,0 +1,117 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "MySQL 监控指标与瓶颈识别",
+      "content": "MySQL 有设置什么监控指标吗？遇到过什么瓶颈吗，如何解决的",
+      "answer": "MySQL 监控应覆盖服务、吞吐、延迟、并发、复制、存储和资源：\n\n- 服务：可连接、查询成功率、错误和重启。\n- 吞吐：Questions/Queries、Com_commit/Com_rollback 等计数器按时间差换算速率，明确 QPS/TPS 口径。\n- 并发：Threads_connected、Threads_running、连接池占用与 max_connections 余量；连接数多不等于正在执行的查询多。\n- 查询：慢查询、分位延迟、锁等待、死锁、临时表和扫描情况。\n- InnoDB：缓冲池读请求与物理读、脏页、redo 与刷盘压力；命中率需用采样差值计算。\n- 复制：接收/应用线程、错误、延迟、GTID/位点和副本健康，延迟为 0 不能单独证明数据一致。\n- 主机：CPU、内存、磁盘容量与 I/O 延迟、网络、文件描述符。\n\n组合应用延迟与数据库指标定位瓶颈；阈值按基线和业务 SLO 设置。不要仅因连接数高就增大 max_connections，也不要用累计计数器直接当每秒速率。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 副本追平与 GTID 屏障",
+      "content": "MySQL 如何确定从库已经同步上主库了",
+      "answer": "`SHOW REPLICA STATUS` 的线程状态、错误和延迟可用于初筛，但 Seconds_Behind_Source（旧名 Seconds_Behind_Master）为 0 不能单独证明副本实时完全同步；连接中断、并行复制和采样时刻都影响解释。\n使用 GTID 时，先在源库取得目标时刻的 `@@GLOBAL.gtid_executed`，在副本执行：\n\n```sql\nSELECT WAIT_FOR_EXECUTED_GTID_SET('REPLACE_WITH_TARGET_GTID_SET', 10);\n```\n返回 0 表示该集合已执行，1 表示等待超时，其他失败条件会报错；还要核对复制过滤、通道和数据一致性，GTID 已执行不保证被过滤的行也存在。\n源库继续写入时，这只证明追到指定屏障，不是永久完全同步。严格切换需按方案控制写入；行数或最新时间戳不能替代一致性校验。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "MySQL 管理员密码重置",
+      "content": "忘记 mysql 密码如何修改",
+      "answer": "有权管理服务器时，先确认 MySQL 版本、目标账户 host、认证插件和真实配置路径，按官方密码重置流程进入维护窗口。\nMySQL 8.x 可采用受保护的 init-file 方法：停止正常实例，用仅实例运行用户可读的临时文件保存下面语句，再按原数据目录/配置启动并指定 init-file：\n\n```sql\nALTER USER 'root'@'localhost' IDENTIFIED BY 'REPLACE_WITH_NEW_PASSWORD';\n```\n成功后删除临时文件、去掉 init-file，恢复正常启动并验证权限。\n若使用 skip-grant-tables，应限制本地访问；该模式下先执行 FLUSH PRIVILEGES 后再 ALTER USER，随后恢复正常授权启动。不要直接 UPDATE mysql.user，也不要使用 MySQL 8 已移除的 PASSWORD()。实际账户、服务命令和恢复步骤需按系统核对。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Oracle Database 与 MySQL 的比较",
+      "content": "oracle 和 mysql 的区别",
+      "answer": "Oracle Database 和 MySQL 都是关系型数据库，各自有不同版本、许可、工具及高可用体系。MySQL 有开源社区版及商业产品，不能把所有部署一概归为无成本。\n比较应明确实际版本/版本档次、SQL 方言、事务与隔离、存储、执行计划、备份恢复、高可用、支持与许可条件。MySQL 现代版本也支持窗口函数、CTE 等功能，不能简单写成“功能简单，只适合中小型”。\n性能和运维难度取决于 schema、数据量、SQL、资源和团队能力。通过代表性负载测试及恢复演练，再评估迁移兼容、授权和总成本，不靠数据库品牌直接推断结果。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 会话数与 TCP 连接数",
+      "content": "不进入交互式 SQL 会话时，如何检查 MySQL 会话数量？TCP 连接数量是否相同？",
+      "answer": "不进入交互式客户端仍可使用受授权的 MySQL 工具/API，例如 `mysqladmin status` 或 `mysqladmin extended-status` 查看 Threads_connected 等指标；它们仍需要正常身份认证和网络权限，不等于无需数据库账号。\n\n也可用 `mysql -e` 执行受授权的状态查询，或通过监控系统获取数据。不要把密码直接写入会泄露的命令行或日志。\n\n`ss` 可统计监听端口的 TCP 连接，但 TCP 数量不等于数据库会话数量：Unix socket、代理、多后端、连接状态与采样时刻都会影响结果。还要区分已连接会话与正在执行的 Threads_running。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 主库故障转移与防双写",
+      "content": "你们 mysql 主库挂了怎么办",
+      "answer": "先确认真实架构：单机、传统异步/半同步复制、Group Replication/InnoDB Cluster 或托管数据库的处理机制不同，不能使用 Redis Sentinel 处理 MySQL。\n\n1. 检查主机、mysqld、磁盘、网络与代理，判断是故障还是分区，避免误切换。\n2. 在新主允许写入之前，确认旧主无法再接受写入并落实 fencing，例如高可用系统隔离、移除入口或阻断写路径。仅以“探测不到旧主”作为依据不够；无法证明隔离时不得贸然形成双主。\n3. 按 GTID/位点、已提交事务、relay log 执行情况、候选健康及高可用机制选择候选。异步复制可能丢失源库尚未复制的事务；GTID 分叉不能简单自动合并，半同步也不是无条件零丢失。\n4. 按预案提升新主并切换代理或连接端点，处理连接池、DNS和重试，验证读写、复制及关键业务。\n5. 恢复旧主后先处理差异，以新主为基准安全重建为副本；不得直接恢复旧主写服务。评估能否安全抢救未复制事务，必要时人工一致性处理。\n6. 记录实际 RPO/RTO，复盘检测、选主、隔离、恢复和演练。\n\n单机无副本时通常依赖备份和 binlog 恢复；多数派方案需按其协议和故障状态操作。托管数据库由平台执行底层切换，应用侧关注端点、重试和验证。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "数据库版本化迁移与兼容发布",
+      "content": "版本更新的时候数据库需不需要变更，你们是怎么实现的",
+      "answer": "版本更新涉及数据库 Schema 时，不应把数据库理解为随应用节点“逐台更新”。建议使用版本化迁移和 expand-and-contract：\n\n1. 备份并验证恢复，评估锁表、数据量、复制延迟和执行时间。\n2. Expand：先增加兼容字段、表或索引，保持旧版本仍可运行；必要时双写或异步回填。\n3. 部署兼容新旧 Schema 的应用，灰度验证后逐步切流。\n4. Contract：确认旧版本不再使用旧结构后，再清理旧字段和兼容逻辑。\n5. 迁移脚本要可审计、幂等或可判断状态；应用回滚和数据回滚应分别设计。\n\n生产执行前应在等规模环境预演，并明确负责人、监控指标和停止条件。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Oracle 运维接触范围与能力边界",
+      "content": "如何说明 Oracle 运维经验以及工具和权限边界？",
+      "answer": "只陈述真实使用的 Oracle 版本、业务环境、职责和权限，例如账号/表空间、备份恢复、实例与 SQL 监控、复制或高可用，未操作的能力明确说明。\n\n介绍一个真实问题：现象 → 日志和指标 → 定位 → 受控操作 → 验证/回滚。没有生产经验时可以说明实验和概念理解，不应直接背成已经维护过 Oracle 集群。\n\nAWR、ASH 等功能的许可要求需按产品与使用方式核对，可能涉及 Diagnostics Pack；有工具名称不等于默认可以免费启用全部诊断功能。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 双主复制与写冲突",
+      "content": "mysql 双主需要注意什么",
+      "answer": "先区分异步互相复制的双主与 Group Replication 多主。普通异步双主没有通用的“按时间戳/节点优先级自动解冲突”机制，同时写相同行可能导致复制错误或数据分叉。\n通常限制应用只写一个主节点，切换时先隔离旧主。GTID、循环复制处理、自增步长/偏移、DDL 和唯一约束都要正确设计；自增错开只能缓解部分主键碰撞，不能解决同一行更新、其他唯一键和业务冲突。\n监控复制位点、延迟、错误与数据一致性，预演故障切换和重建。若用 MGR 多主，应理解事务认证、限制与冲突回滚，客户端必须能处理失败重试。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "MySQL 复制监控与副本故障恢复",
+      "content": "MySQL 复制应监控什么？副本复制报错或延迟时如何恢复？",
+      "answer": "监控接收/应用线程状态、错误、复制延迟、GTID/位点、relay log 和资源；结合 Performance Schema 与 `SHOW REPLICA STATUS` 判断是否有积压、阻塞或数据不一致。\n\n发生故障先区分网络/认证/源库 binlog 保留不足、磁盘与 I/O、锁等待、复制过滤或数据冲突。保留错误与位点证据，修复原因后按预案恢复复制。\n\n不能为消除告警盲目跳过事务，这可能留下永久数据缺口。源日志缺失或一致性无法证明时，使用可信备份/克隆与正确位点重建副本，再验证数据和复制状态。\n\n副本故障与主库故障转移是不同流程：后者还需要旧主隔离、候选选择和切流。延迟为 0 与线程 Running 不单独证明数据完整，必要时使用指定 GTID 屏障与一致性校验。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "SQL JOIN 与外连接过滤",
+      "content": "连表查询会吗",
+      "answer": "常见连表查询有 INNER JOIN、LEFT JOIN 和 RIGHT JOIN：\n\n```sql\nSELECT a.id, b.a_id\nFROM table_a AS a\nINNER JOIN table_b AS b ON a.id = b.a_id;\n\nSELECT a.id, b.a_id\nFROM table_a AS a\nLEFT JOIN table_b AS b ON a.id = b.a_id;\n```\nINNER JOIN 只返回匹配行；LEFT JOIN 保留左表全部行，未匹配的右表字段为 NULL。过滤条件放在 ON 还是 WHERE 会影响外连接语义。\nMySQL 不支持原生 FULL OUTER JOIN，需要根据业务用 LEFT JOIN 加右侧未匹配行的 UNION ALL 等方式模拟，并正确处理重复行与 NULL。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "MySQL 与 Redis 的架构分工",
+      "content": "MySQL 集群是怎么样的，Redis 用来做了什么",
+      "answer": "MySQL 常见部署包括单写主库加副本，以及 InnoDB Cluster/Group Replication。异步复制存在延迟；读写分离要考虑读后写一致性。\nGroup Replication 有单主和多主模式，生产选型需考虑多数派、事务认证、网络及故障域。组内选主不等于应用自动换连接，通常还需 Router、代理或应用重连。异步双主不天然解决写冲突，也不能直接保证写吞吐翻倍。\nRedis 可用于缓存、共享会话、原子计数、Streams 队列等。缓存需设计失效与一致性；锁需唯一标识、原子释放、租期和 fencing 等措施；持久化/副本不等于绝对不丢数据。具体“用来做了什么”应结合本人实际架构。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL binlog 与复制执行链路",
+      "content": "MySQL 主从复制的原理",
+      "answer": "传统 MySQL 复制主要依赖源库 binlog 与副本 relay log：\n\n1. 源库在配置允许时把相应事务变化记入 binlog；binlog 与 InnoDB redo log 不是同一机制。\n2. 副本 receiver/I/O 线程连接源库，接收 binlog 并写入 relay log。\n3. applier 执行 relay log 中的事件；现代配置可由 coordinator 与多个 worker 并行应用，并非永远只有一个 SQL 线程顺序执行。\n4. relay log 根据轮换、执行位置和 relay_log_purge 等条件回收，不是每条 SQL 一执行完就立即删除对应文件内容。\n\nROW 与 STATEMENT 等格式记录内容不同，GTID 帮助跟踪事务。异步复制存在延迟和故障丢失风险；半同步确认与应用完成、严格数据一致性是不同条件。监控线程、错误、位点与实际一致性，并验证备份恢复。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "MySQL 慢 SQL 与资源瓶颈排查",
+      "content": "如果数据库出现执行 SQL 慢、如何排查这个瓶颈在哪",
+      "answer": "先区分耗时发生在应用排队、网络、连接池还是数据库执行，再结合慢日志、Performance Schema、锁等待和主机指标定位。\n\n1. 取得代表性 SQL、参数、执行次数、延迟和数据规模，避免只优化偶发的一次采样。\n2. 用 EXPLAIN 检查访问路径、连接顺序、扫描量、估计行数与索引；EXPLAIN ANALYZE 会实际执行语句，要在受控环境评估负载与副作用。\n3. 检查谓词、函数/隐式转换、索引顺序、分页、排序与临时表，也检查锁、事务长度、I/O和统计信息。全表扫描不必然错误，添加索引有写入与空间成本。\n4. 在代表性数据上验证优化结果与正确性，必要时限流、终止受控异常查询或回退变更。\n5. 建立基线、监控和复盘；个人案例按真实证据说明，不编造“发现缺索引后速度提升多少”的经历。\n\n数据库整体瓶颈还需看 CPU、内存、I/O、连接和复制；SQL 计划只是证据之一，不应把所有慢查询都归因于缺索引。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    }
+  ]
+}

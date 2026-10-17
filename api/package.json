@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test --test-concurrency=1 ./tests/security-regression.test.ts ./tests/ai-completion.test.ts",
     "test:mysql": "tsx --test ./tests/mysql-backup-regression.test.ts",
+    "test:bank": "tsx --test ./tests/question-bank.test.ts",
     "db:migrate:sqlite-to-mysql": "tsx src/scripts/migrateSqliteToMysql.ts"
   },
   "dependencies": {

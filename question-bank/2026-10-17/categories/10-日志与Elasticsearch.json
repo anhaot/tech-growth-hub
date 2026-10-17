@@ -1,0 +1,77 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "日志采集方案的选型与取舍",
+      "content": "如何根据日志量、查询需求、团队能力和成本选择日志平台？",
+      "answer": "先明确每日写入量、峰值、保留期、查询频率、全文检索需求、敏感数据、可用性目标和团队维护能力，再做容量与成本评估。不能仅凭“公司大小”指定方案。\n\n- Elasticsearch + Kibana：适合结构化字段和全文检索，但要管理分片、索引生命周期、存储和集群资源。\n- Loki + Grafana：主要索引标签，适合按服务、环境和时间定位日志；标签高基数或宽范围全文扫描可能增加成本。\n- 托管日志服务：减少底层集群运维，需核对费用、网络出口、保留策略、访问权限与数据合规要求。\n- 小规模环境可先使用应用日志轮转和轻量集中采集，但必须解决检索、备份、权限与磁盘上限。\n\n采集器可选 Fluent Bit、Fluentd、Elastic Agent/Filebeat 或 Grafana Alloy，按后端、插件和维护状态选择。不要把采集器、存储与查询界面当作同一个组件。上线前测试多行日志、丢失/重复、缓冲重试和故障恢复。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Loki 标签索引与查询局限",
+      "content": "简述 Loki 的核心设计原理，并说明它在日志收集场景中的主要局限。",
+      "answer": "Loki 主要索引标签来定位日志流，将日志内容压缩存为 chunk；查询先用标签和时间范围选流，再过滤/解析日志内容，LogQL 还支持日志派生指标与聚合。\n局限是宽时间范围、弱选择性标签及大量全文扫描可能昂贵；高基数标签会增加索引/流的负担。需设计标签、保留、存储、查询并发和限额。\n与全文索引后端相比，它采用不同的存储/检索取舍，不是“不支持聚合”，也不能保证标签命中时所有查询都快或整体一定更便宜。",
+      "explanation": "区分标签索引、原文检索和查询时聚合。查询速度与成本由筛选范围、数据规模、schema 和部署资源决定，避免简单背成“ELK 强、Loki 弱”。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "ELK、EFK 与日志采集器的区别",
+      "content": "ELK 和 EFK 分别包含什么？Filebeat、Fluentd 和 Fluent Bit 在其中承担什么角色？",
+      "answer": "ELK 通常指 Elasticsearch、Logstash、Kibana；EFK 通常指 Elasticsearch、Fluentd、Kibana。Fluent Bit 是另一种常用的轻量采集器，不能把字母 F 固定解释为 Filebeat。\n\nElasticsearch 存储与检索，Kibana 查询与展示；Logstash、Fluentd、Fluent Bit、Filebeat 等用于不同的采集和处理链路。常见链路包括：\n\n- Filebeat → Logstash → Elasticsearch → Kibana。\n- Fluent Bit/Fluentd → Elasticsearch → Kibana。\n- 采集器直接输出到 Elasticsearch，省去不需要的处理中间层。\n\nLogstash 插件和复杂处理能力较丰富，资源开销需压测；Fluent Bit 通常更轻量，Fluentd 的插件与聚合能力较丰富。性能取决于过滤、缓冲和流量，不能断言 EFK 必然比 ELK 更快。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Elasticsearch 角色与分片架构",
+      "content": "ES 有做什么架构上的设计吗",
+      "answer": "Elasticsearch 节点可同时具有多个角色。master-eligible 负责参与选主，当前 master 管理集群状态、索引元数据及分片分配；只有专用 master 节点才不承担 data 角色的数据存储，不能说所有 master 都不存数据。\ndata 节点保存分片并处理读写，ingest 节点可执行预处理流水线。所有节点都能协调收到的请求；将 node.roles 设为空可部署专用 coordinating-only 节点，但仍需足够资源。\n索引由主分片与副本构成，副本分散到不同节点/故障域。角色拆分、分片数量与冷热分层应按工作负载、容量和恢复需求设计，不是所有小集群都需专用角色节点。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Elasticsearch 选主与投票配置",
+      "content": "ES 的 Master 是怎么选举出来的？",
+      "answer": "Elasticsearch 在具备选主资格的节点间进行选举，要求当前投票配置的多数派可用，以选出唯一的 master 并提交集群状态；不能按所有 data 节点数量直接算票。\n7+ 使用新的集群协调机制，并自动维护投票配置，不再设置 `discovery.zen.minimum_master_nodes`。历史 6.x 的 Zen Discovery 与配置只应作为旧版本知识说明。\n`cluster.initial_master_nodes` 仅用于首次引导一个全新集群，成功引导后移除，不能在正常重启/加入已有集群时重新设置来“恢复选主”。规划节点与故障域时同时考虑投票多数派和数据副本可用性。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "容器日志与集中日志查询",
+      "content": "开发查看日志的方式",
+      "answer": "临时查看 Kubernetes 容器日志：\n\n```bash\nkubectl logs -n default demo-pod -c app --tail=100\nkubectl logs -n default demo-pod -c app --previous\nkubectl logs -n default demo-pod -c app -f\n```\n集中日志可通过 Kibana 查询 Elasticsearch，或在 Grafana 中查询 Loki/Elasticsearch 等日志数据源；Prometheus 主要存储指标，不负责保存容器日志原文。\n主机文件日志可用 `tail -F /path/to/log`。应用最好输出带时间、级别和 request/trace ID 的结构化日志。查询按最小权限授权，注意容器日志轮转和保留期限，kubectl logs 不能代替长期归档。\n\ndefault、demo-pod 和 app 是示例 Namespace、Pod 与容器名，应先查询实际对象再替换。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes stdout 日志采集",
+      "content": "K8S 的 pod 日志怎么收集有了解过吗 (如何从 stdout 中拿到)",
+      "answer": "容器运行时把 stdout/stderr 写入节点上的容器日志文件，kubelet 为 `kubectl logs` 提供访问；CRI 格式和路径按运行时/节点配置确认。\n\n1. 节点级采集：以 DaemonSet 部署 Fluent Bit、Fluentd、Filebeat/Elastic Agent 或 Grafana Alloy 等，读取容器日志，添加 Kubernetes 元数据并处理多行、轮转、缓冲和重试。\n2. 后端：写入 Elasticsearch 并用 Kibana 查询，或写入 Loki 并用 Grafana 查询；采集端、存储和查询工具分别说明。\n3. 临时排障：`kubectl logs -n <namespace> <pod> -c <container> --tail=100`；上一次容器实例加 `--previous`，实时追踪加 `-f`。\nPromtail 已于 2026-03-02 结束维护，新部署应选择仍受支持的采集方案，已有部署按官方迁移流程升级。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "ELK、EFK 部署与日志可靠性",
+      "content": "elk 或 efk 怎么部署的",
+      "answer": "ELK = Elasticsearch + Logstash + Kibana；EFK 通常 = Elasticsearch + Fluentd + Kibana，也常用 Fluent Bit 采集。\n部署时规划 Elasticsearch 角色、副本、磁盘和故障域，配置认证/TLS；Kibana 连接受保护的 Elasticsearch。\nKubernetes 日志采集常用 DaemonSet 读取节点容器日志，配置 CRI/JSON 和多行解析、Kubernetes 元数据、过滤、缓冲、重试和背压；输出到 Elasticsearch 或经中间处理层。\n配置索引模板、生命周期/保留策略和 Kibana data view，验证丢日志、重复日志、时区和查询权限。使用 Filebeat 的方案请明确组件名，而不是把 EFK 的 F 直接解释成 Filebeat。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Elasticsearch 节点故障容忍条件",
+      "content": "Elasticsearch 要容忍一台或两台节点故障，需要哪些条件？",
+      "answer": "容错要同时满足控制面投票、分片副本、故障域、入口与剩余容量，不能只数总节点数。\n\n|目标|投票层典型配置|每个分片的数据副本条件|\n|---|---|---|\n|容忍任意一台相关节点故障|至少 3 个合适的投票成员，故障后保留多数派|至少两份有效副本并正确分布|\n|容忍任意两台相关节点故障|至少 5 个合适的投票成员，故障后保留多数派|至少三份有效副本并正确分布|\n\n“有效副本”要求分配成功、同步状态和放置满足目标，不能仅把 number_of_replicas 设大而实际 unassigned。还需避免同一故障域失去全部拷贝，配置客户端多入口与超时重试，确保故障后资源和磁盘仍可运行。\n\nElasticsearch 7+ 使用自动管理的投票配置，不应用旧 Zen minimum_master_nodes 公式；初始引导参数只用于适用的首次建群。剩余数据可读、还能写入与集群有主是不同条件，需要按实际故障进行演练。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    }
+  ]
+}

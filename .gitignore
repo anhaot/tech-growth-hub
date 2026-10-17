@@ -26,6 +26,7 @@ __pycache__/
 *.aab
 
 # Local deployment presets and internal review records.
+/2026-10-14.json
 /compose.aliyun.yaml
 /tech-growth-hub.env.example
 /docs/deployment-20*.md

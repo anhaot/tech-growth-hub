@@ -1,0 +1,101 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "磁盘空间与 inode 告警排查",
+      "content": "出现磁盘告警你会如何排查",
+      "answer": "先定位告警对应文件系统：`df -h` 看空间，`df -i` 看 inode；检查增长速度、挂载点、只读状态和近期任务。\n限定到该文件系统查目录和大文件，例如：\n\n```bash\ndu -xhd1 /mountpoint\nfind /mountpoint -xdev -type f -size +1G -print\nlsof +L1\n```\n工具选项需按发行版确认。df 高但 du 低时检查已删除但仍打开的文件、挂载覆盖和文件系统开销。\n按业务归档/保留策略清理日志、缓存、临时数据或扩容；优先 logrotate 等标准机制。不要盲删数据库文件或仍在写入的日志，释放开放文件空间通常要让持有进程安全关闭/重开句柄。处理后验证空间和业务。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Windows Server 运维能力说明",
+      "content": "如何如实说明 Windows Server 运维经验与能力？",
+      "answer": "按实际经历说明操作系统版本、服务器用途、权限和本人负责内容；没有生产经验就明确说明实验或基础了解。\n\n可核对的能力包括服务与事件日志、网络/DNS、存储和权限、补丁与重启窗口、备份恢复，以及实际接触的 IIS、Active Directory 或远程管理。可使用 PowerShell、Server Manager 等工具；Server Core 等环境不应假定一定有完整 GUI。\n\n用一个真实问题说明现象、证据、操作、验证与回滚，不要把“会连接远程桌面”扩大成精通全部 Windows 基础设施。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Linux 性能调优方法",
+      "content": "常见的 linux 系统优化有哪些",
+      "answer": "以业务吞吐、延迟和错误率为目标，先测量 CPU、内存、I/O、网络、锁和资源配额，再选择参数。\nCPU 可评估 NUMA、亲和、频率策略和 cgroup throttling；内存关注工作集、换页、OOM、缓存与 dirty writeback；I/O 关注磁盘延迟、队列、文件系统和支持的调度器；网络关注连接复用、队列、带宽和丢包。\nIP 转发和桥接 netfilter 参数用于特定网络功能，不是通用性能开关。关闭 swap、固定旧版 deadline/noop 或关服务，也不保证改善性能。\n每次变更记录基线、假设、参数和回滚，在代表性负载下验证；只保留有证据改善且不破坏正确性的设置。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "新增磁盘与持久化挂载",
+      "content": "如何挂载一个新磁盘",
+      "answer": "先用 `lsblk -f`、`blkid` 和资产记录确认新盘、容量、已有文件系统和数据，避免把已有业务盘当新盘；格式化会销毁目标数据。\n按需要创建分区或 LVM，确认目标为空且有授权后再创建文件系统，例如 `mkfs.xfs /dev/sdX1`（sdX1 是需替换的示例，不要照抄）。\n创建挂载点并挂载验证，使用 blkid 得到 UUID，在 fstab 中按实际文件系统与启动需求配置，例如：\n\n```fstab\nUUID=REPLACE_WITH_UUID /data xfs defaults 0 0\n```\n保存前备份 fstab，执行 systemctl daemon-reload（systemd 环境），检查配置并测试目标挂载，最后验证读写、权限、容量和启动行为。是否使用 nofail 等选项应由该盘对业务的必要性决定。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Linux 启动与挂载故障排查",
+      "content": "Linux 在新增磁盘或修改配置后无法正常启动，如何定位与恢复？",
+      "answer": "优先通过控制台/带外管理查看实际报错，判断停在哪一层：固件与启动设备、GRUB、内核/initramfs、根文件系统或 systemd 服务阶段。\n\n检查启动盘与 UUID、根分区和文件系统状态；修改 /etc/fstab 后启动失败，重点检查不存在的设备、错误 UUID、挂载参数和等待超时。进入救援环境时先识别分区，保留数据与日志，再修正配置。\n\n检查依赖故障、磁盘空间、驱动和 initramfs；引导修复命令必须匹配发行版、BIOS/UEFI 与分区方式，不能照搬另一台机器。文件系统检查应按类型操作，通常需在卸载状态进行，避免在线破坏数据。\n\n恢复后验证挂载、服务、日志和再次重启，并保留可回滚的配置。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "服务器 GPU 与网卡接口",
+      "content": "GPU、网卡一般接在服务器的什么接口？",
+      "answer": "服务器 GPU 和高速网卡常通过 PCIe 连接，但并非全部设备都使用普通 PCIe 插卡：部分 GPU 使用 SXM 等专用模块，网卡也可能为 OCP 或板载形式。\n\n安装前核对主板支持、物理尺寸、PCIe 代际与实际通道数、供电散热、NUMA、固件和驱动。物理 x16 插槽不保证电气链路一定是 x16，可通过厂商资料及 `lspci` 等检查实际设备和链路能力。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Linux 常用命令与 Nginx 日志分析",
+      "content": "常用命令，查询内存，查看磁盘大小，查看 Nginx 日志具体命令，如何用 awk 筛选打印出访问 ip",
+      "answer": "常用命令可按目的记忆：\n\n- 文件与权限：ls、find、stat、chmod、chown、tar；变更前确认目标与权限范围。\n- 文本：rg/grep、awk、sed、sort、uniq；注意编码与日志格式。\n- 进程与服务：ps、top、systemctl、journalctl、kill；先识别进程和影响，优先正常终止。\n- 资源：free、vmstat、iostat、df、du；空间与 inode 分别检查。\n- 网络：ip、ss、curl、dig、tcpdump；从实际发生问题的网络命名空间测试。\n\n在常见 Nginx 日志第一列为客户端地址时，可统计频次：\n\n```bash\nawk '{print $1}' access.log | sort | uniq -c | sort -nr | head -20\n```\n\n必须先核对 log_format；代理后的首列可能是代理 IP，不能未经信任边界校验就把 X-Forwarded-For 当成真实客户端。对大日志限制时间范围或采用集中查询，避免生产上无界扫描。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "RAID 容量、容错与备份",
+      "content": "raid 阵列有哪几种？有什么区别？",
+      "answer": "常见 RAID 的容量和容错需按布局与控制器确认。设每盘有效容量相同为 S：\n\n|级别|典型容量|容错与特点|\n|---|---|---|\n|RAID 0|N×S|条带化，无冗余，一盘故障可丢失整个阵列|\n|RAID 1|典型两盘镜像为 S|数据镜像，传统两盘配置可容忍一盘故障|\n|RAID 5|(N−1)×S|至少 3 盘，可容忍一盘故障，有校验写入与重建开销|\n|RAID 6|(N−2)×S|至少 4 盘，可容忍两盘故障，有双校验开销|\n|RAID 10|传统两两镜像布局为 N/2×S|通常至少 4 盘且偶数，容错取决于故障是否落在同一镜像组|\n\n不同软件/硬件实现可能支持其他布局，不能把某种 RAID 10 的最低盘数推广到所有实现。考虑写入模式、磁盘类型、重建时长、URE 风险和故障域；RAID 不防误删、勒索或整个阵列损坏，必须另做可恢复备份。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "常见 Linux 发行版与运维差异",
+      "content": "Ubuntu 和 centos 以及 kylin 系统的区别点在哪些地方？指令有什么不同",
+      "answer": "Ubuntu 属于 Debian 系发行版，常用 apt 和 dpkg；CentOS Linux 是历史上的 RHEL 兼容发行版，CentOS Linux 8 已在 2021 年停止维护，7 已于 2024-06-30 停止维护。CentOS Stream 是不同的发行模式，需按具体版本核对支持期。\nKylin 必须先说明具体厂商、产品、架构和版本，不同版本的包管理与兼容性有差异，不能只按名称断言用 apt 或 yum。\n排查发行版先读 `/etc/os-release`。通用文件、网络和用户命令大体相通，但包管理、仓库、服务名称和默认防火墙不同；使用 systemd 的发行版可用 systemctl。发行版包通常安装到 /usr 等标准路径，/usr/local 多用于本地管理的软件，不能把两者混为一谈。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "离线文件系统检查与恢复",
+      "content": "如果文件系统损坏了，而硬盘是好的你会如何恢复",
+      "answer": "先确认设备、文件系统类型、错误日志和硬件健康，停止写入并保存可恢复的数据或磁盘镜像；修复文件系统不能代替备份。\n卸载目标文件系统后再处理，根分区通常需进入救援环境：\n\n- ext2/ext3/ext4：使用 e2fsck，先做只读检查，再按评估执行修复。\n- XFS：使用 `xfs_repair -n <设备>` 做不修改检查；按日志状态和官方流程处理，再对未挂载文件系统执行 xfs_repair。`fsck.xfs` 并不进行实际修复。\nXFS 脏日志一般需要按条件重放；`-L` 清除日志可能造成数据损失，只能作为有备份并已评估后的最后手段。修复后挂载并校验数据，必要时从备份恢复。不要重新格式化损坏分区来“恢复”数据。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "CPU 高负载与数据库负载排查",
+      "content": "如果系统经常 CPU 负载很高或者数据库负载很高，你会做什么处理？",
+      "answer": "先建立错误率、响应时间、CPU、load、内存、I/O、连接和近期变更的时间线。Linux load 高可能是 CPU 排队，也可能是不可中断 I/O 等待。\nCPU 问题用 top/pidstat 定位进程和线程，结合应用 profiling、GC、锁竞争、容器 CPU throttling 排查。数据库问题检查慢日志、执行计划、锁等待、连接池、Buffer Pool 和磁盘延迟。\n先优化已证实的 SQL/索引、请求模型和容量问题，必要时限流或回滚。扩容、缓存、读写分离、归档和分片需要评估成本及一致性，不能把调大连接数或分库分表当成通用处理。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "服务器卡顿的分层排查",
+      "content": "如果服务器卡顿了你是如何处理的",
+      "answer": "先确认卡顿的时间、影响范围、近期变更和业务延迟，保留现场，再分层定位：\n\n1. CPU/负载：`top`、`pidstat`、`uptime`；Linux load average 包含可运行和不可中断等待任务，不能直接等同 CPU 使用率。\n2. 内存：`free -h`、`vmstat 1`，关注 available、换页和 OOM/cgroup 限额。\n3. I/O/空间：`iostat -xz 1`、`df -h`、`df -i`，结合磁盘延迟与队列定位进程。\n4. 网络/应用：`ss -s`、接口错误、健康接口、应用线程/连接池、数据库锁和依赖延迟。\n5. 结合 `journalctl`、内核日志和变更时间线确认根因。按预案限流、回滚或扩容，处理后验证业务指标；终止进程前确认负责人、影响和恢复方式。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    }
+  ]
+}

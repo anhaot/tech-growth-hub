@@ -1,0 +1,197 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Cilium 的 eBPF 数据面",
+      "content": "Cilium 基于哪种内核技术实现高性能网络与安全策略？它替代了传统 iptables 的什么机制？",
+      "answer": "Cilium 的核心网络和策略数据平面使用 eBPF 程序及 map，在内核的相应 hook 处理转发、过滤和负载均衡。启用且满足条件的 kube-proxy replacement 可接管 Service 转发，并非安装 Cilium 就一定完全替代全部 iptables 用途。\nL7 策略、Ingress/Gateway 等能力可能使用 Envoy 等用户空间代理，不能把所有应用层处理都说成在 eBPF 内完成。",
+      "explanation": "eBPF 可避免部分传统规则规模带来的开销，但实际性能取决于版本、内核、挂载点、流量、功能和硬件，不能无条件断言优于 iptables。不同模式还可能保留部分 netfilter 路径。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Hubble 网络可观测性",
+      "content": "Hubble 为 Cilium 提供哪些网络可观测能力？L7 可见性有什么前提？",
+      "answer": "Hubble 基于 Cilium 的网络事件提供流量观测，可用 CLI、Relay、UI 和指标接口查看连接、源/目标工作负载、协议、转发或丢弃结果及服务依赖关系。\n\n排障时可以关联 Pod、Namespace、身份和策略结果，判断请求是否到达、在哪个方向被拒绝，并结合指标观察流量与错误变化。\n\nL7 观测取决于协议支持、代理路径和实际配置。不能认为安装 Hubble 后所有 HTTP、DNS、加密应用负载都自动可见；端到端加密的明文通常无法直接从网络事件中取得。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Calico 与原生 NetworkPolicy 的字段区别",
+      "content": "在 Calico 中，一个基本的 NetworkPolicy 规则通常包含哪些关键字段来定义入口（ingress）规则？",
+      "answer": "先确认 API：Calico 的 `projectcalico.org/v3` NetworkPolicy 与 Kubernetes 原生 `networking.k8s.io/v1` NetworkPolicy 结构不同。\nCalico 常用 metadata.namespace、spec.selector、types、order、ingress/egress；规则使用 action、protocol、source/destination 的 selector/nets/ports 等，例如完整的 namespaced 资源（选择同一 Namespace 的 client Pod 访问 web Pod）：\n\n```yaml\napiVersion: projectcalico.org/v3\nkind: NetworkPolicy\nmetadata:\n  name: allow-client-web\n  namespace: default\nspec:\n  selector: app == 'web'\n  types:\n    - Ingress\n  ingress:\n    - action: Allow\n      protocol: TCP\n      source:\n        selector: app == 'client'\n      destination:\n        ports:\n          - 80\n```\nsource.selector 默认在策略所在 Namespace 匹配；需要跨 Namespace 时应明确配置 namespaceSelector。原生策略则使用 podSelector、ingress[].from、ingress[].ports 等，不能混写。",
+      "explanation": "Calico 策略可有显式 Allow/Deny 与顺序语义；原生 NetworkPolicy 的允许规则通常按选中策略相加，不使用 Calico 的 action/order。字段和默认拒绝行为要根据实际 API、方向与策略覆盖范围验证。",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Calico 网络与封装模式",
+      "content": "Calico 的无封装、IP-in-IP、VXLAN 和 CrossSubnet 如何选择？BGP 与封装模式是什么关系？",
+      "answer": "Calico 的数据转发需要区分“路由怎么获知”和“数据包怎么传输”。\n\n- 无封装：直接转发 Pod IP，要求底层能正确路由这些网段；BGP 可用于路由传播，但不是所有模式都必须使用。\n- IP-in-IP：外层 IPv4 封装内层 IP 包，IP 协议号为 4，不使用 UDP 端口。\n- VXLAN：以 UDP 封装内层以太网帧，Calico 常用端口 4789；需要底层放通并规划 MTU。\n- CrossSubnet：仅在目标节点位于不同子网时封装，同子网直接路由；判断依据是节点地址和子网配置，不是 Pod 是否属于同一个 Pod CIDR。\n\nIPPool 的 `ipipMode` 和 `vxlanMode` 不能同时启用。IP-in-IP 是 IPv4 方案；VXLAN 的 IPv6 能力和前提需核对 Calico、内核与安装配置。封装、策略执行方式和 eBPF 数据面是不同维度，不能简单混成互斥的三个产品。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Multus 多网络接口",
+      "content": "Multus CNI 插件解决了 Kubernetes 网络的什么特殊需求？",
+      "answer": "Multus 是多网络的 meta-plugin，负责调用默认 CNI 和附加 CNI，让 Pod 按 NetworkAttachmentDefinition 及网络注解连接到多个网络。\n\n普通 Pod 通常有一个主网络接口（另有 loopback）；使用 Multus 后可增加接口，例如业务网、存储网或 SR-IOV 网络。各接口的地址与能力由相应插件、IPAM 和设备配置决定。\n\n多接口不会自动解决默认路由、策略路由、DNS、安全策略或负载均衡；需要明确应用绑定的地址和实际流量路径，并考虑附加网络的权限与资源约束。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Underlay 与 Overlay",
+      "content": "解释 Kubernetes CNI 网络中 Underlay 网络和 Overlay 网络的根本区别。",
+      "answer": "Underlay 是承载节点/VTEP 之间通信的底层 IP 网络，可以由物理或虚拟网络设施组成。Overlay 在其上构建逻辑网络，通过封装实现隔离和跨节点通信。\n\n- VXLAN：以 UDP 封装内层以太网帧。\n- IP-in-IP：将 IP 包封装在另一个 IP 包中，不是 TCP/UDP 封装。\n- 无隧道路由方案：直接转发 Pod IP，依赖正确的路由传播，可使用 BGP、静态路由或云路由。\nOverlay 仍要求底层地址可达、允许封装协议，并考虑 MTU。性能取决于硬件卸载、数据平面和负载，不能无条件断言某种模式更快；Overlay 中的 Pod IP 也可以通过额外路由或网关对外开放。",
+      "explanation": "底层传输网络与上层逻辑网络是两个层次；无隧道 Pod 网络只是利用底层路由的一类方案。BGP 不是 Underlay 必备协议，Overlay 也并非只允许 Pod IP 在封闭网络内使用。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "同节点 Pod 通信路径",
+      "content": "同一个节点上的两个 Pod 如何通信？是否一定不经过路由或网络策略？",
+      "answer": "通信路径取决于 CNI 数据面，不存在统一的“永远只走 bridge”结论。\n\n- Linux bridge 方案：Pod 流量经 veth 到桥，根据邻居和桥 FDB 转发到另一个 Pod；在地址与二层条件满足时可直接桥接。\n- 路由型方案：经宿主机路由表转发到目标 Pod 的 veth，不必经过一个统一桥。\n- eBPF 方案：可在相应 hook 执行查找、转发和策略，具体路径依插件配置。\n\n普通同节点 Pod IP 通信通常不需经过物理网络；但可能经过主机路由、netfilter/eBPF 策略等。访问 Service VIP 与直接访问 Pod IP 的路径也不同。诊断应核对接口、路由、邻居、策略和抓包位置。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "VXLAN 跨节点封装与转发",
+      "content": "请详细说明VXLAN技术如何实现Kubernetes集群中Pod的跨节点通信，并阐述其关键流程与核心组件作用。",
+      "answer": "VXLAN 在可达的节点/VTEP 网络上建立逻辑二层网络。发送端先根据目的地址和网络状态确定目标 VTEP，将内层以太网帧封装成外层 IP + UDP + VXLAN 包；接收端解封装并转发至目标 Pod。\n\nVNI 是 24 位网络标识。VTEP 的寻址与转发通常涉及路由、邻居表和 FDB，具体维护方式由实现决定，不要求所有插件都采用相同 Linux bridge 路径。\n\n标准 VXLAN UDP 端口为 4789；Flannel 的 Linux VXLAN 后端常用 8472，而 Calico 常用 4789，排障必须看实际配置。封装减少可用 MTU，例如常见 IPv4/以太网条件下约增加 50 字节，IPv6、额外 VLAN 或其他封装开销会不同。\n\n检查 VTEP 可达、UDP 放通、MTU、节点/Pod 路由、邻居和 FDB；小包可达而大包异常时需重点查 MTU 和路径 MTU 发现。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Calico 无封装 BGP 的控制面与数据面",
+      "content": "Calico在BGP模式下，如何实现Pod的跨节点路由？其控制平面和数据平面分别负责什么？",
+      "answer": "在 Calico 无封装 BGP 模式下：\n\n- 控制面：Felix 负责根据工作负载、IPPool 和策略编程本机路由/数据平面；BGP 组件与节点、路由反射器或外部路由器交换 Pod 网段。\n- 数据面：Linux 内核按路由表把原始 IP 包转发到目标节点，通常不做隧道封装；NetworkPolicy 仍由配置的数据平面执行。\n\n传统 Calico 部署常使用 BIRD，但现代版本/产品配置也可能使用其他 BGP 实现，回答时应以实际 Calico 版本和配置为准。BGP 对等关系可以是节点 mesh、路由反射器或外部网络设备，不等于必须修改物理交换机。",
+      "explanation": "该题限定无封装 BGP 模式。应区分 Felix、BGP 路由传播和 Linux 数据面，并避免把 BIRD 写成所有现代 Calico 部署的固定实现。",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Flannel 后端与 VXLAN 通信流程",
+      "content": "Flannel 的 VXLAN 和 host-gw 后端有什么区别？VXLAN 跨节点通信如何完成？",
+      "answer": "Flannel 为节点维护 Pod 子网与转发信息，常见后端包括 VXLAN 和 host-gw。Kubernetes 集成通常由 subnet manager 使用节点 PodCIDR 等信息；历史部署也有 etcd 后端，不能要求所有现代集群再单独部署一个 Flannel etcd。\n\nVXLAN 模式下，Pod 包经 veth/本机网络进入节点数据面；节点依据目的 Pod 子网找到远端 VTEP，经 VXLAN 隧道发送。远端解封装后转发到目标 Pod。常见 Linux 接口名为 `flannel.1`，Linux 默认 UDP 端口通常为 8472，以实际配置为准。\n\nhost-gw 模式通过节点作为下一跳直接路由，不进行 VXLAN 封装，通常要求节点能满足直接二层邻接等网络条件；可用性取决于底层拓扑。\n\nFlannel 的基础网络功能不等于提供原生 NetworkPolicy 执行，策略能力需由额外组件或组合方案提供。排障时检查节点子网分配、路由、VTEP/邻居/FDB、MTU和允许的协议。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "CNI 职责与调用流程",
+      "content": "简述容器网络接口（CNI）在 Kubernetes 中的基本功能及其核心工作流程。",
+      "answer": "CNI 规定容器网络插件的调用与配置约定。Kubernetes 中通常由容器运行时在 CRI Pod sandbox 的网络生命周期调用 CNI；不是为每一个普通应用容器都单独建立一套 Pod 网络。\n\n创建 sandbox 时调用 ADD，插件连接网络、配置接口与路由，地址分配可委托 IPAM；清理时调用 DEL。VERSION、CHECK 等操作的支持与使用需按 CNI 和运行时版本确认。\n\nCNI 负责 Pod 网络接入，具体插件还可能实现路由、封装和策略；Service 转发、DNS、Ingress 与 CNI 不是同一概念。检查配置目录、二进制、IPAM 分配、运行时日志和节点路由可定位创建网络失败。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Service 四种类型与 Headless",
+      "content": "Kubernetes 中 Service 有哪四种主要类型？请说出它们的名称并简述其最核心的用途或区别。",
+      "answer": "Service 的四种 `spec.type` 是：\n\n1. ClusterIP：默认类型，提供集群内的虚拟服务地址。\n2. NodePort：在节点分配端口，通常在 ClusterIP 基础上提供入口。\n3. LoadBalancer：请求外部实现提供负载均衡入口，可由云控制器、MetalLB 等实现，并非只适用于公有云。\n4. ExternalName：返回指定外部名称的 DNS CNAME，不创建普通代理转发到后端的路径。\n\nHeadless Service 设置 `clusterIP: None`，通常用于发现端点，不是第五种 type。ClusterIP、DNS、EndpointSlice 和实际转发能力要结合 selector、端点就绪与数据面配置判断。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "kube-proxy 机制与运行模式",
+      "content": "kube-proxy 如何实现 Service 转发？Linux 上有哪些主要运行模式，版本与替代方案有什么限制？",
+      "answer": "kube-proxy 监听 Service 和 EndpointSlice 等对象，将服务转发规则写入节点数据面。请求通常由内核规则转发，不是每次请求都进入 kube-proxy 用户态循环。\n\nLinux 的主要模式包括：\n\n- iptables：基于 netfilter 规则实现 Service 转发。\n- IPVS：使用 IPVS 服务与调度机制，并依赖其他规则处理部分功能；自 Kubernetes 1.35 起已弃用，不宜再作为新集群的默认推荐。\n- nftables：原生 nftables 模式自 Kubernetes 1.33 稳定，需满足内核、网络插件与版本条件。稳定状态不表示所有现有集群都已自动切换。\n\nWindows 使用不同的数据面，例如 kernelspace。Cilium 等插件可用 eBPF 实现 kube-proxy replacement，但要配置和验证兼容性，不能仅因安装插件就认为所有 Service 流量已被替换。排障先确认实际模式，再检查端点、策略、连接跟踪和对应规则。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Calico 与 Flannel 选型对比",
+      "content": "calico 和 flannel 的区别是什么？",
+      "answer": "Calico 与 Flannel 需要按实际后端比较：\n\n- Flannel 主要提供基础 Pod 网络，VXLAN、host-gw 等后端适应不同底层条件；基础 Flannel 本身通常不执行 NetworkPolicy。\n- Calico 提供 Pod 网络与策略能力，可使用无封装路由、IP-in-IP、VXLAN，以及不同策略/数据面实现；并非必须对外建立 BGP 对等。\n- 策略需求、底层路由与封装放通、MTU、操作系统/内核支持、规模、故障定位和团队维护能力决定选型。\n\n比较时采用相近资源、负载和策略配置做压测。不能断言 Calico 一定更快，或 Flannel 无条件兼容任意底层网络。也有组合网络与策略实现的方案，需明确谁负责哪一部分。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 外部访问与服务暴露",
+      "content": "k8s 的服务暴露主要有几种",
+      "answer": "外部访问方案主要有：\n\n- NodePort：访问节点地址与分配端口；通常每个 Service port 可分配自己的 nodePort，而不是每个 Service 永远只有一个端口。节点防火墙与数据面必须允许访问，`ss` 不一定显示一个普通监听进程。\n- LoadBalancer：由云集成或 MetalLB 等提供入口，可能是公网也可能是内网；健康检查与源地址保留取决于实现和配置。\n- Ingress/网关：通过控制器和代理实现 HTTP 路由、TLS 等，代理本身仍需通过 Service 或其他方式获得可达入口。\n- 调试可用受授权的 port-forward，它通常不作为稳定生产入口。\n\nClusterIP 通常用于集群内部；ExternalName 返回 DNS 别名，Headless 用于端点发现，不能把它们当作公网反向代理。选择时考虑协议、域名、TLS、权限、客户端源地址、会话、流量策略和成本。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "跨 Namespace 的服务通信",
+      "content": "不同命名空间下的容器想要互相通信，能怎么实现",
+      "answer": "不同命名空间的 Pod 默认可以通过集群网络互通，除非 NetworkPolicy 或其他安全策略限制。推荐通过 Service 访问：\n\n- 完整域名：`<service>.<namespace>.svc.cluster.local`\n- 常用跨命名空间短名：`<service>.<namespace>`\n\nPod IP 可以直连，但 Pod 重建后地址可能变化，不适合作为稳定依赖。Ingress/Gateway、NodePort、LoadBalancer 主要解决集群外或特定入口访问，普通跨命名空间通信不需要绕到集群外。排障时检查 DNS、Service/EndpointSlice、端口、NetworkPolicy 和 CNI。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "滚动更新与 Service 地址稳定性",
+      "content": "滚动更新会使 service 的 ip 改变吗？",
+      "answer": "如果同一个 Service 对象与 ClusterIP 保持不变，Deployment 滚动更新时 Service 的虚拟地址通常保持稳定，EndpointSlice 随 Pod 与就绪状态更新。\n\nPod IP 可以变化，已有连接也不会自动迁移到新 Pod。端点摘除、规则传播、连接池、重试和应用优雅终止都影响用户体验，不能只凭 ClusterIP 稳定保证没有中断。\n\n需要 readiness、合理更新策略和容量，结合终止宽限与连接排空验证真实流量。若删除重建 Service 或变更入口资源，应重新核对地址和外部依赖。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod 访问外部数据库故障排查",
+      "content": "Pod 访问外部数据库不通时，如何区分网络、认证和数据库问题？",
+      "answer": "先取得真实错误，区分 DNS 失败、超时、Connection refused、TLS 失败、认证拒绝和查询超时。\n\n从发生问题的 Pod 网络与身份发起检查：DNS、目标地址与端口、路由、NetworkPolicy、节点防火墙、安全组、NAT/出口地址；节点能访问不能证明 Pod 能访问。\n\n数据库侧核对监听地址、访问来源限制、账号授权、TLS、连接上限与日志。通过同一 Pod 中受授权的客户端测试连接，避免把凭证写入公开日志；用两端抓包或指标定位包是否到达与响应是否返回。\n\n修复后从实际应用路径验证读写和恢复，保留最小允许规则，而不是直接关闭全部网络限制。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes Service DNS 解析",
+      "content": "K8S 的 service 解析是什么去做的？",
+      "answer": "Kubernetes 集群 DNS 通常由 CoreDNS 提供。它监听 Service、EndpointSlice 等资源，为 Service 生成 DNS 记录。\n\n同命名空间 Pod 可使用 `<service>`；跨命名空间通常使用 `<service>.<namespace>`；完整域名为 `<service>.<namespace>.svc.cluster.local`，其中集群域可能被管理员修改。\n\n普通 ClusterIP Service 的 DNS 通常解析到虚拟 IP；Headless Service 则返回后端端点地址。排障可检查 Pod 的 resolv.conf、CoreDNS 日志与指标、Service、EndpointSlice 以及 NetworkPolicy。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Pod 出站、SNAT 与固定出口",
+      "content": "Pod 访问集群外部地址时，默认链路是什么？需要固定出口或受控出站时如何设计？",
+      "answer": "Pod 出站路径由 CNI、路由、策略和环境决定。无封装方案可直接路由 Pod IP；IP-in-IP/VXLAN 等可能用于节点之间传输，但跨节点隧道不等于访问互联网的固定出口。\n\n访问外部时，源 Pod IP 如果不能被对端正确路由，常通过节点或网关 SNAT 为可返回的地址。是否执行 SNAT、在哪里执行取决于 IPPool、CNI、路由和云网络配置；不能认为所有 Pod 外访一定被节点 NAT。\n\n需要固定出口时可设计受支持的 egress gateway、NAT gateway 或受控代理，核对故障域、回程、源地址保留和策略。Ingress 是进入服务的方向，不替代 Pod 出站规则。\n\n排障从 Pod 的 DNS、路由和策略到节点/网关抓包，确认真实出口地址及对端安全组/白名单，并验证双向路径。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Headless Service 的服务发现",
+      "content": "Headless Service 与普通 Service 有何区别？典型应用和 DNS 行为是什么？",
+      "answer": "Headless Service 设置 `spec.clusterIP: None`，不分配 ClusterIP VIP；客户端通过端点发现自己选择后端，常用于 StatefulSet、数据库成员发现和客户端负载均衡。\n带 selector 时，控制器生成 EndpointSlice，DNS 通常返回符合就绪条件的端点地址；`publishNotReadyAddresses` 等配置可改变就绪过滤行为。StatefulSet 配合 governing Service 可获得稳定 Pod 域名，但 Pod IP 仍可能变化。\nSRV 记录依赖命名端口等条件，不是所有 Headless Service 自动拥有；DNS 返回顺序也不是稳定成员顺序的保证。没有 selector 的 Headless Service 需自行维护端点，不能一律说返回所有 Pod IP。",
+      "explanation": "稳定 DNS 身份、当前 IP 和 DNS 返回顺序是不同概念。Headless Service 不执行 kube-proxy 的 VIP 负载均衡，连接重试和后端选择由客户端承担。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Namespace 与 NetworkPolicy 隔离",
+      "content": "Kubernetes 中 Namespace 和 NetworkPolicy 分别解决什么问题？如何实现网络隔离？",
+      "answer": "Namespace 提供命名与管理边界，不自动隔离网络；不同 Namespace 的 Pod 在默认网络条件下通常互通。\n\n使用支持 NetworkPolicy 的 CNI，为目标 Pod 配置 ingress/egress 默认拒绝，再明确允许 DNS、业务依赖、监控等流量。原生允许策略通常相加；同一个 peer 内的 namespaceSelector 与 podSelector 可共同限制，分成多个 peer 时是不同的允许分支。\n\n镜像通常由节点容器运行时拉取，Pod NetworkPolicy 不能直接当作节点拉镜像流量的控制规则。节点出口、hostNetwork 和其他主机流量应按 CNI/平台能力单独验证。\n\n测试允许与拒绝路径、实际源地址与 Service/NAT 影响。多租户还需 RBAC、配额、Pod 安全、凭证与必要的节点隔离，不能只创建 Namespace。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Calico 组件与通信验证",
+      "content": "如何去判断 calico 是否正常工作？",
+      "answer": "按实际安装方式发现组件，不把 Namespace 固定成 kube-system：manifest 安装常见 kube-system，operator 安装常见 calico-system，可先执行 `kubectl get pods -A -o wide`。\n\n检查 calico-node、相关 controllers/operator 状态与 Events，使用发现的 Namespace、Pod 和容器名读取日志。核对版本、节点 Ready、CNI 配置、IPPool 余量、Felix 与 Typha（若使用）连接。\n\n数据面按实际模式检查路由、BGP、IP-in-IP/VXLAN、iptables/nftables/eBPF；`calicoctl node status` 主要反映 BGP，不是所有模式的完整健康证明，工具版本和权限需匹配。\n\n从同节点/跨节点 Pod 测试 Pod IP、Service、DNS 与出站，并执行策略允许和拒绝测试。结合丢包、延迟、指标与两端抓包定位；组件 Running 或策略对象存在不证明端到端网络正确。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "跨节点 Pod IP 与 Service 通信",
+      "content": "跨节点 Pod IP 通信有哪些模型？与访问 Service VIP 有什么区别？",
+      "answer": "Pod 网络通常要求地址可区分并具有可达的双向路径，实际由 CNI 和底层网络实现。常见模型为：\n\n- 无封装路由：通过静态路由、BGP 或云路由传播 Pod 网段，直接转发 Pod IP。\n- Overlay：节点之间用 VXLAN、IP-in-IP 等封装，接收端解封装并交付 Pod，需底层可达、放通协议且 MTU 合理。\n\n同节点和跨节点路径依实现不同；eBPF 是数据面技术，可与路由或封装模型组合，不应当成完全独立的第三种物理网络。\n\n直接访问 Pod IP 不需要先经过 Service VIP。访问 ClusterIP 则由 kube-proxy 或替代数据面将 VIP 转发至符合条件的端点；CoreDNS 提供名称解析，不承担每个业务包的转发。\n\n排障核对源/目标 Pod、节点、路由或隧道、策略、端点与回程。hostNetwork、附加网络等场景应另看具体模型，不能把普通 Pod 默认假设硬套到所有工作负载。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    }
+  ]
+}

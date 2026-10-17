@@ -8,6 +8,10 @@
 
 技术成长站用于持续建设结构化技术题库，并把题目维护、AI 内容协作、分类管理、学习复习、用户权限和数据运维集中在一个系统中。它适用于运维、开发、测试、网络、安全等技术方向，也可以用于团队培训、面试题管理和个人知识库。
 
+公开题库：[2026-10-17 版](./question-bank/2026-10-17/README.md)，共 178 道、16 个分类，提供可移植 JSON 和阅读版。导入前请备份，导入不会自动覆盖旧题。
+
+部署和安装前可查看[当前版本与升级判断](./docs/current-version.md)及[已知依赖告警](./docs/dependency-status.md)。
+
 ![技术成长站概览](./docs/images/overview.png)
 
 ## 产品能力
@@ -172,6 +176,7 @@ cd api
 npm run typecheck
 npm run lint
 npm test
+npm run test:bank
 npm audit --omit=dev
 
 cd ../web

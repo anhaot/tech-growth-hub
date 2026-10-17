@@ -1,0 +1,45 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Kubeflow Pipelines 工作流编排",
+      "content": "Kubeflow Pipelines 如何定义和执行机器学习工作流？",
+      "answer": "Kubeflow Pipelines（KFP）用于编排机器学习工作流，而不是把整个 Kubeflow 简化成一个 CI/CD 工具。\n\n通过 SDK 定义组件的输入、输出和执行环境，将组件连接成有向无环图；编译成目标版本支持的流水线定义，在集群上创建运行。步骤可以包括数据处理、训练、评估和模型交付。\n\n可配置参数、依赖、缓存、重试与资源要求，并记录执行和产物。为了复现，需要固定代码、镜像、数据版本和配置；仅保存流水线 YAML 或启用缓存并不保证结果可复现。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "KServe 模型服务的灰度发布",
+      "content": "KServe 与 Kubeflow 有什么关系？以明确版本和部署模式说明模型服务如何实现灰度发布。",
+      "answer": "KServe（原 KFServing）是 Kubernetes 模型推理项目，可与 Kubeflow 集成，但不能把所有 Kubeflow 安装都说成固定默认安装同一种 Serving 栈。\n以 KServe 0.18 文档的传统 InferenceService 为例，serverless 模式依赖 Knative，支持按修订版本进行 canary rollout，可使用 predictor.canaryTrafficPercent 等受支持字段；standard 模式的发布/路由能力不同。\n灰度时确认版本、部署模式、网关实现和新旧模型兼容，设置分流比例并观察延迟、错误率和推理指标，失败回退。不能用一个未限定 API 的“Traffic 字段”解释全部部署。\n\n传统 serverless 模式可先将 `predictor.canaryTrafficPercent` 设为 10，再根据验证结果逐步提高至 100。必须确认上一已就绪修订版本存在、新修订就绪且实际路由生效；该字段不能直接套用到所有标准部署模式或其他推理 API。",
+      "explanation": "KServe 自身还有不同推理 API/功能演进。回答要明确具体资源和模式；不能把 Istio VirtualService、Knative Traffic 与 InferenceService 字段混成同一个配置。",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Kubeflow Training Operator 与 Trainer",
+      "content": "Kubeflow 中用于管理训练任务的 Operator 是什么？它基于什么资源？",
+      "answer": "历史 Kubeflow Training Operator v1 使用 TFJob、PyTorchJob、MPIJob 等面向框架的 CRD 管理分布式训练。\nKubeflow Trainer v2 使用统一 TrainJob，引用 TrainingRuntime/ClusterTrainingRuntime 描述训练环境与拓扑，支持不同运行时及调度能力。v1 的资源不能直接当作 v2 的现行接口。\n控制器将训练声明转化为 Kubernetes 工作负载并管理其生命周期；实际支持的框架、运行时与字段以安装版本和 CRD 为准。",
+      "explanation": "先说明 v1 还是 v2，再解释训练作业与运行时模板的关系。迁移需按官方流程映射，不是把旧 YAML 的 kind 简单改名。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubeflow Pipelines 元数据与血缘",
+      "content": "Kubeflow Pipelines 的元数据记录什么？与模型、数据文件的存储有什么区别？",
+      "answer": "KFP 使用 ML Metadata（MLMD）记录执行、产物及其关联关系，支持查询输入、输出与工作流血缘。元数据可包括参数、状态、产物类型、属性和存储 URI。\n\n元数据数据库保存描述和关系；模型、数据集等大文件通常存放在对象存储等 artifact store，通过 URI 关联。元数据服务不是训练引擎，也不应被当作大文件仓库。\n\n旧资料中的 `kubeflow/metadata` 项目与现行 KFP 所用 MLMD 不应混淆。完整复现还依赖代码、镜像、数据版本、随机种子和运行环境，不是只有血缘图即可。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubeflow 组件与职责",
+      "content": "Kubeflow 的常见组件有哪些，分别承担什么职责？为什么需要说明实际版本与安装范围？",
+      "answer": "Kubeflow 是 Kubernetes 上的机器学习工具生态，常见组件包括 Notebooks、Pipelines、Trainer（历史 Training Operator）、Katib（超参数优化）、Hub（模型注册与目录）以及与 KServe 等推理工具的集成。\n具体安装可组合不同项目，组件名单随发行版和版本变化，没有永久固定的“核心五个”。元数据通常由 Pipelines/ML Metadata 等能力管理，不应把某个旧版组件列表当成所有部署的统一标准。",
+      "explanation": "按功能记忆开发、工作流、训练、调参、推理和追踪，再对应实际版本的项目。Kubeflow、Kubeflow Pipelines 与平台发行包的安装范围不同。",
+      "categoryId": null,
+      "difficulty": "medium"
+    }
+  ]
+}

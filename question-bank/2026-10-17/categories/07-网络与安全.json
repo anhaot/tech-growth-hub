@@ -1,0 +1,93 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "常用网络工具与用途",
+      "content": "有哪些常用的网络工具，能介绍一下吗",
+      "answer": "常用网络工具按用途分类：\n\n- 地址和接口：`ip addr`、`ip link`\n- 路由和邻居：`ip route`、`ip route get <ip>`、`ip neigh`\n- 连接和监听：`ss -antup`；netstat 已较旧\n- DNS：`dig`、`nslookup`、`getent hosts`\n- 连通和路径：`ping`、`tracepath`、`traceroute`、`mtr`\n- 端口/协议：`nc`、`curl`、对应数据库客户端\n- 抓包：`tcpdump`、Wireshark\n- 防火墙：`nft`、`iptables`\n\n`ss` 主要查看 socket，不用它查看路由表；路由应使用 `ip route`。排障时按 DNS→路由→TCP→TLS/应用逐层验证。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "同网段 HTTP 访问失败排查",
+      "content": "同一个网段内两台服务器，当 B 服务器 80 端口正常开放且正常时，A 服务器无法访问的原因有那些或解决办法。",
+      "answer": "题目已确认 B 服务器的 80 端口处于监听且服务健康，因此重点排查 A 到 B 的访问路径：\n\n1. 在 A 上确认目标地址、DNS 和路由：`ip route get <B_IP>`。\n2. 测试 TCP 而不只依赖 ping：`nc -vz <B_IP> 80`、`curl -v http://<B_IP>/`。\n3. 在 A、B 两端检查防火墙、安全组、ACL 和策略路由；使用精确允许规则，不要直接停止 firewalld。\n4. 在 B 上确认监听地址：`ss -lntp '( sport = :80 )'`。若只监听 127.0.0.1，远端无法访问；通常应监听实际网卡地址或 `0.0.0.0`。\n5. 两端抓包：`tcpdump -ni any host <peer_ip> and port 80`，判断请求是否到达、响应是否返回。\n6. 检查反向路径、重复 IP、邻居表、交换机 VLAN/端口隔离等二层问题。\n\n不要再把“服务未启动、80 被其他进程占用”列为主要原因，因为这与题目前提冲突。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "iptables 表、链与转发路径",
+      "content": "iptables 的四表五链了解过吗？",
+      "answer": "iptables 是管理 Linux netfilter 规则的工具。常见表包括 filter、nat、mangle、raw，部分系统还有 security；具体 hook 与优先级取决于内核和功能，不能简单认为所有包按固定“表顺序”走一遍。\n\n主要内建链：PREROUTING、INPUT、FORWARD、OUTPUT、POSTROUTING。入站包经 PREROUTING 后按路由判断送本机 INPUT 或转发 FORWARD，再从 POSTROUTING 出站；本机产生的包走 OUTPUT，再经相应路由和 POSTROUTING。\n\nfilter 用于过滤，nat 用于连接的地址转换映射，mangle 用于修改标记等，raw 可影响连接跟踪。NAT 规则通常用于建立连接的首包，后续包依据 conntrack 映射处理，不是每个包都重新匹配同一套 NAT 规则。\n\n先确认是 iptables-legacy 还是 iptables-nft 前端，区分命令语法与底层规则。排障检查路由、规则计数、默认策略、conntrack 和实际命中，变更前备份并保留恢复路径。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "tcpdump 定向抓包",
+      "content": "tcpdump 有用过吗？用来做什么的",
+      "answer": "tcpdump 是命令行抓包工具，可按接口、主机、端口、协议和 TCP 标志过滤流量，用于定位握手失败、重传、RST、DNS、延迟和单向通信等问题。\n\n常见示例：\n\n```bash\ntcpdump -ni any -c 1000 'host 192.0.2.10 and port 443'\ntcpdump -ni eth0 -c 1000 -s 0 -w capture.pcap 'tcp port 443'\n```\n\n抓包应控制过滤条件、时长和文件大小，注意敏感数据与权限，并使用 Wireshark/tshark 分析时间线。Kubernetes 中还要选择正确抓包位置：Pod namespace、veth、节点物理口或隧道口。\n\n“是否用过”请按真实情况回答；未实际使用时可说明理解的过滤语法和实验范围。\n\n192.0.2.10、端口和接口是示例值，应替换并限制范围、时长或数量。加密流量的握手与包特征可以观察，但不能直接据此读取 TLS 内部的 HTTP 明文。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "系统安全加固与验证",
+      "content": "常用加固系统安全方法或方式",
+      "answer": "按业务与系统基线实施加固：及时更新受支持版本，最小权限与账号审计，限制不必要服务与端口，使用密钥/MFA 等认证，保护凭证与备份，配置日志、监控和恢复能力。\n\nSSH 应限制访问来源，核对 root 与密码登录策略、密钥权限与审计。修改后先保持原管理会话，并通过新会话验证和准备控制台恢复，再收紧旧入口。改 SSH 端口主要减少扫描噪声，不能替代认证与访问控制。\n\nSELinux/AppArmor、防火墙和安全策略应按应用需求配置与验证，不应为方便排障长期全部关闭。每次变更记录基线、影响、验证和回滚；是否使用特定安全产品取决于环境需求，不是加固的唯一标准。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "IPv4 子网掩码与地址范围",
+      "content": "IPv4 子网掩码和 CIDR 前缀如何确定网络地址、广播地址与主机范围？",
+      "answer": "子网掩码用连续的高位 1 标记网络部分，CIDR 的 /n 表示网络位数。网络地址由 IP 与掩码按位 AND 得到。\n\n例如 192.168.10.37/24，掩码为 255.255.255.0，网络地址为 192.168.10.0，常规广播地址为 192.168.10.255，常规主机范围为 .1 到 .254。\n\n普通广播子网常用可分配数为 2^(32-n)-2，但 /31 点到点链路和 /32 主机路由等有特殊语义，不能一律减 2。网络划分还需考虑路由、地址冲突和网关，并以实际链路规范为准。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "漏洞发现、修复与复测流程",
+      "content": "发现服务器或应用漏洞后，如何评估、修复并确认风险已经处理？",
+      "answer": "先确认资产、产品版本、暴露面与漏洞证据，区分扫描结果、误报和实际可利用条件；依据影响、暴露与业务重要性排序，不直接在生产执行攻击验证。\n\n采取临时缓解时说明期限与残余风险，随后在受控环境验证补丁、配置或升级方案，检查兼容性、备份与回滚。按变更流程实施并复测，核对版本与实际路径，不只看扫描告警是否消失。\n\n记录影响资产、修复责任、时间线、证据与遗留项；不能修复时采用隔离或其他控制并安排跟踪。个人经历只补充真实使用的工具与案例，不虚构扫描平台或处理数量。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "TCP 连接统计与 TIME_WAIT",
+      "content": "如何查看某个应用或端口建立的网络连接数量？如果出现大量 TIMEWAIT 你会如何排查",
+      "answer": "查看连接时应限定端口或进程，并去除表头后计数，例如：\n\n```bash\nss -antp\nss -Hant state established '( sport = :443 or dport = :443 )'\nss -Hant state established '( sport = :443 or dport = :443 )' | wc -l\nss -Hant state time-wait | wc -l\n```\n\n第三行统计本机与 443 端口相关的 ESTABLISHED TCP socket，第四行统计本机全部 TIME_WAIT socket；同机两端的连接可能计为两个 socket，代理和连接复用也会改变口径，它们不等于用户数或应用会话数。\n\n大量 TIME_WAIT 通常与本机主动关闭的短连接有关，同时关闭时也可能双方都出现 TIME_WAIT；数量本身不能直接判定异常。先确认远端、连接创建速率、四元组分布、端口耗尽和业务错误，再检查大量短连接、未复用连接池、Keep-Alive/上游超时等问题。TIME_WAIT 通常已无可归属的存活进程，不能依赖 `ss -p` 总能查到原进程，应在连接存活时结合进程指标或跟踪工具关联。\n\n`net.ipv4.tcp_fin_timeout` 控制的是孤儿连接在 FIN_WAIT_2 的时间，不会缩短 TIME_WAIT。不要把修改 `tcp_tw_reuse` 当作通用答案；必须结合内核版本、连接方向、压测和回滚计划评估。优先修复连接使用方式。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "SSH 登录失败分层排查",
+      "content": "如果服务器远程登录不了如何排查",
+      "answer": "先保留完整错误并区分：连接超时、Connection refused、认证失败或会话启动失败。\n\n客户端用 `ssh -vvv` 查看协商和认证；确认地址、实际端口、用户名、跳板与代理。超时检查路由、安全组/防火墙和抓包；拒绝连接检查监听服务和端口。\n\n需要服务端操作时使用现有管理会话或控制台，检查 ssh/sshd 服务、配置与 Include 文件、`ss` 监听、journal/认证日志。认证失败核对账号状态、允许的认证方式和密钥，常见 ~/.ssh 目录及私钥/authorized_keys 权限需合适，实际由用户/系统配置决定。\n\n修改前检查配置语法，保留恢复入口并用新会话验证。不要盲目关闭防火墙或 SELinux；服务名与日志路径因发行版而异。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "OSI 七层模型与 TCP/IP",
+      "content": "OSI 七层模型",
+      "answer": "OSI 模型按功能分七层：\n\n|层|主要功能|示例|\n|---|---|---|\n|7 应用|应用协议与服务语义|HTTP、DNS|\n|6 表示|编码、序列化与数据表示|编码/格式转换|\n|5 会话|会话建立与管理|会话控制功能|\n|4 传输|端到端传输与端口|TCP、UDP|\n|3 网络|寻址与路由|IP、路由|\n|2 数据链路|链路帧与邻居交付|Ethernet、交换|\n|1 物理|信号与介质|电信号、光纤|\n\n互联网常用 TCP/IP 模型合并 OSI 的部分高层功能。TLS、RPC 或具体软件可能跨多个功能层，不能把所有真实协议机械地限定到唯一 OSI 层。排障时可借助分层思路，但应检查实际协议栈。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "服务器外网访问失败排查",
+      "content": "服务器访问外网失败，如何分层定位并选择工具？",
+      "answer": "先定义目标域名/IP、端口、协议和完整错误，区分整机、容器、某个用户或某个目标异常。\n\n1. 用 ip addr/route 检查地址与默认路由，用 dig 等检查 DNS，比较域名与 IP 测试结果。\n2. 检查到网关和目标的路径；ping/traceroute 可能被过滤，失败不能单独证明 HTTP/TCP 不可达。\n3. 用 curl 或受控 TCP 测试检查端口、代理、TLS、超时与响应，用 ss 查看连接状态。\n4. 检查主机防火墙、云安全组/ACL、NAT/出口代理、源地址与对端限制；容器问题必须从相同网络命名空间测试。\n5. 用 tcpdump 在相关接口定位握手与返回包，结合网关与对端证据判断阻断位置。\n\n修复最小配置并验证业务，不直接关闭全部安全控制。工具与步骤应围绕具体错误，避免脱离场景堆命令。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Nginx 性能调优与故障排查",
+      "content": "nginx 调优、日常故障处理思路",
+      "answer": "Nginx 调优应先建立吞吐、延迟、错误率、CPU、内存、连接和磁盘 I/O 基线，再根据瓶颈调整：\n\n1. `worker_processes auto` 通常比手写 CPU 数更稳妥；结合 CPU 亲和和容器配额验证。\n2. 根据文件描述符上限、连接模型调整 worker_connections 和系统限制；它包括客户端与上游等连接，不能直接当成每个 worker 可承载的客户端数。\n3. 合理配置 keepalive、超时、缓冲、缓存、压缩和上游连接池，避免通用参数照抄。\n4. 日志应分级、采样、轮转和集中采集，不建议笼统关闭，以免失去审计和排障依据。\n\n故障处理：先执行 `nginx -t`，检查进程、监听、错误日志、上游状态、DNS、证书、系统资源和网络；使用 `curl -v`、`ss`、`tcpdump` 等定位，根据根因选择恢复；配置变更经检查后可使用 graceful reload，但 reload 不能解决全部运行时故障。任何调优都应压测、灰度并保留回滚配置。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Nginx 动态 DNS 与 Pod 地址变化",
+      "content": "Nginx 的 pod 的解析缓存时间参数你是怎么修改的？除了这个解决方式还有其他思路吗？",
+      "answer": "如果 Nginx 在配置加载时把 DNS 名称解析为 Pod IP，后续 IP 变化可能导致转发失败。仅配置 `resolver` 并不意味着所有静态 upstream 自动动态解析。\n\n开源 Nginx 从 1.27.3 起支持 upstream 的 `server ... resolve`；需要共享内存 zone 和 resolver，例如：\n\n```nginx\nupstream app_backend {\n    zone app_backend 64k;\n    resolver 10.96.0.10 valid=30s;\n    server app.default.svc.cluster.local:8080 resolve;\n}\nserver {\n    listen 8080;\n    location / {\n        proxy_pass http://app_backend;\n    }\n}\n```\n\n示例 DNS IP、域名、端口需替换；先确认 Nginx 版本和实际 DNS TTL/缓存行为。旧版可采用兼容方案，如受控 reload、平台服务发现或变量形式 proxy_pass，但要验证 URI 转发语义。\n\n普通 ClusterIP Service 在保持对象不变时提供相对稳定的 VIP，通常比直接引用 Pod IP 合适；Headless DNS 返回端点 IP，仍要处理动态解析、健康检查和连接重试。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "HAProxy 与 LVS 的区别",
+      "content": "haproxy 和 lvs 的区别",
+      "answer": "HAProxy 是用户空间代理，mode tcp 可做四层 TCP 转发，mode http 可解析 HTTP 做七层路由，还支持健康检查、TLS 和连接管理。\nLVS 基于 Linux 内核 IPVS，主要做四层负载均衡，常见 NAT、DR、TUN 转发模式，对返回路由、VIP、ARP 等有不同要求；常结合 Keepalived 实现地址/调度器高可用。\n需要按 URL/Header 分流或 TLS 终止时可选择 HAProxy 等代理；需要特定四层转发架构时可评估 LVS。实际性能与稳定性依赖转发模式、连接/请求模型、硬件和配置，不能仅用“内核一定更快、HAProxy 只能七层”概括。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Nginx 负载策略与配置重载",
+      "content": "你们的 nginx 负载策略是什么，nginx 怎么确定配置文件语法对不对，如何热加载",
+      "answer": "Nginx 常见上游策略有默认的加权轮询、least_conn、ip_hash，以及适当配置的 hash/consistent。选择依据是请求耗时、会话和后端负载，不能只凭机器数量决定。\n\nip_hash 会按客户端地址分组，但代理源地址、拓扑变化和后端故障会影响分配，不能保证永远固定会话；业务需要可靠会话时还需相应共享或持久化设计。\n\n```bash\nnginx -t\nnginx -s reload\n```\n\n如果运行使用自定义配置路径，应让检查与重载针对同一实例和配置。reload 启动新 worker 并使旧 worker 优雅退出，不会把已有连接立即迁移到新上游；检查日志、配置生效和业务指标，不只看命令退出码。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "外部 HTTP 请求到 Tomcat 的路径",
+      "content": "外部 HTTP 请求到 Tomcat 的典型路径是什么？是否必须经过 Nginx？",
+      "answer": "一种常见架构是：客户端解析 DNS → 建立连接到负载均衡/TLS 入口 → Nginx 按域名和路径反向代理 → Tomcat 接收 HTTP 并调用 Servlet/应用逻辑 → 依赖服务返回 → 响应沿链路返回。\n\nNginx 可以处理静态资源、TLS 和入口转发，Tomcat 本身也能提供 HTTP 服务，因此不一定必须经过 Nginx。实际链路可能包括网关、WAF 或内嵌 Tomcat，应按架构说明协议、端口、超时和请求头。\n\n排障通过请求 ID、访问日志、上游状态和分段延迟关联，而不是只看最终 HTTP 状态码。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Nginx 与 Tomcat 的分工",
+      "content": "Tomcat，nginx 等 web 服务器用来干嘛",
+      "answer": "1. Tomcat：是 Java Servlet 容器，用于运行 Java Web 应用，支持 Java Servlet 和 JSP，处理 HTTP 请求，将请求转发到对应的 Servlet 或 JSP 页面，返回响应。\n2. Nginx：是高性能的 HTTP 服务器和反向代理服务器，用于静态文件的服务、反向代理、负载均衡，处理高并发的 HTTP 请求，将请求转发到后端的应用服务器（如 Tomcat）。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    }
+  ]
+}

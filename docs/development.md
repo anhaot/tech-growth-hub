@@ -115,6 +115,7 @@ npm run build
 npm run lint
 npm run typecheck
 npm run test
+npm run test:bank
 ```
 
 说明：
@@ -123,6 +124,7 @@ npm run test
 - `lint`：ESLint 检查
 - `typecheck`：只做类型检查
 - `test`：运行后端安全及 AI 完成状态回归测试
+- `test:bank`：在临时 SQLite 中验证公开题库全部分类的预览、导入、保存和导出回读，不访问部署数据库
 
 ### 前端
 

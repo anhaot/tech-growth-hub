@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Python 浅拷贝与深拷贝",
+      "content": "深浅拷贝有什么区别？",
+      "answer": "赋值通常只是增加引用；拷贝需要区分对象本身与其引用的内容。\n\n- 浅拷贝 `copy.copy`：对列表等创建新的外层容器，内部元素仍引用原对象；共享的可变元素修改会相互影响。\n- 深拷贝 `copy.deepcopy`：递归复制适合复制的内容，使用 memo 处理循环与重复引用；不可变对象等可能被复用，自定义类也能定义拷贝行为，不能说所有子对象一定是全新的。\n\n```python\nimport copy\noriginal = [[1], [2]]\nshallow = copy.copy(original)\ndeep = copy.deepcopy(original)\nshallow[0].append(3)\nassert original == [[1, 3], [2]]\nassert deep == [[1], [2]]\n```\n\n给 shallow 的某个外层位置重新赋值不会修改 original 的外层位置；文件、连接等资源也不适合盲目深拷贝。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "CPython 引用计数与循环 GC",
+      "content": "python 的垃圾回收机制 (GC) 了解过吗",
+      "answer": "以 CPython 为例，主要使用引用计数及时回收引用归零的对象，再由循环垃圾回收器检测部分容器对象形成的不可达引用环。循环 GC 并不是“引用计数完全失效后才扫描所有对象”。\n分代策略、阈值和触发条件依 CPython 版本/构建而变化，不能把“三代 0/1/2”当作所有 Python 永久不变的规范；例如 3.14 系列的小版本对代际策略有过调整，应查看运行版本的 gc 文档。\nPyPy 等实现有不同回收机制。引用归零或完成 GC 也不保证进程 RSS 立即下降，因为解释器/分配器可能保留内存用于复用。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Python 解释器版本与虚拟环境",
+      "content": "如何在同一机器上使用不同的 python 环境？",
+      "answer": "区分解释器版本与包环境：venv 通常隔离同一解释器的依赖，不会自动把 Python 解释器升级或换成另一个版本。\n\n需要多个解释器时，可使用已核验的多版本安装、pyenv、Conda 或容器等方式；选用仍受支持并与项目兼容的版本，不覆盖系统 Python。\n\n```bash\npython3 -m venv .venv\n. .venv/bin/activate\npython -m pip install -r requirements.txt\npython --version\npython -m pip --version\n```\n\n先确认 python3 指向所需解释器；项目应记录 Python 版本、锁定依赖和来源，避免 pip 与实际运行解释器不一致。Windows 激活方式不同。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    }
+  ]
+}

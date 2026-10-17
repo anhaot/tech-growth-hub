@@ -1,0 +1,85 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Redis 执行模型与持久化",
+      "content": "Redis 的工作原理",
+      "answer": "Redis 核心命令执行通常以串行为基础，结合事件循环和 I/O 多路复用处理客户端，因此应避免慢命令/大键阻塞主执行路径。但现代 Redis 还可能使用 I/O 线程、后台任务和 fork 子进程，不能说整个服务永远只有一个线程。\n它提供字符串、哈希、列表、集合、有序集合等内存数据结构。RDB 是快照，AOF 记录写入；持久化策略、fsync、复制延迟和故障类型共同决定可能丢失的窗口，开启持久化不等于零数据损失。\nCluster 利用哈希槽分片，主副本通过异步复制协作。性能来自数据结构、内存访问和网络/执行模型，也受负载与配置影响。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kafka 集群与 KRaft 架构",
+      "content": "kafka 集群包含什么组件、集群架构是怎么样的",
+      "answer": "Kafka 服务端包括 broker（保存分区日志、处理请求）和 KRaft controller quorum（管理集群元数据与选举）。Kafka 4.0+ 已移除 ZooKeeper 模式；历史 3.x/更早版本需按部署模式单独说明。\nTopic 分为 Partition，每个分区有一个 leader 和若干 follower 副本，副本分布在 broker 上。controller leader 与分区 leader 是不同概念，不存在全局唯一“Leader Broker”负责所有消息。\nproducer/consumer 是客户端，使用分区、消费组、offset 和协调器等机制生产和消费，不是必须和 broker 同机部署的服务端组件。\n分区故障转移需要合格副本与正确 ISR/选举配置；可靠性还取决于副本、acks、min.insync.replicas 和是否允许不干净选举。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kafka 与 RabbitMQ 的区别",
+      "content": "kafka 和 rabbitmq 的区别",
+      "answer": "Kafka 以 Topic/Partition 的追加日志为核心，消息按保留策略保存，消费者以 offset 跟踪进度，适合重放、流处理和事件日志。\nRabbitMQ 以交换机/队列和路由为核心，适合任务分发及灵活消息路由，也提供 quorum queues 和 streams 等能力，不能只概括为内存队列。\nKafka 的可靠性取决于副本数、ISR、acks、min.insync.replicas 等配置，并非每条消息默认都已写到多个副本。RabbitMQ 要按队列类型设计持久性，结合发布确认、消费确认、复制和重试。\n吞吐、延迟和成本取决于消息大小、批处理、确认方式、持久化与硬件；两者都需处理重试/重复，不能只凭产品名保证“更快”或“绝不丢失”。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "etcd 单成员与集群引导",
+      "content": "单主的 etcd 是如何被启用的？如何去定义编排",
+      "answer": "如果只有一个 etcd 进程，应称单成员集群；etcd 多成员集群本来就通过 Raft 选举一个 leader。“单成员”和“单 leader”是两个概念。\n单成员启动需明确 name、data-dir、client/peer 监听与对外通告地址、initial-cluster/token/state，并按环境配置 TLS、认证和持久化。不能用任意公网 HTTP 监听示例充当生产方案。\nkubeadm 的堆叠 etcd 通常由 kubelet 运行静态 Pod；独立业务 etcd 可以用受维护的部署方案或 StatefulSet 配合持久卷，但必须处理成员身份和集群引导，不能仅写一个裸 Pod YAML。\n单成员没有成员故障容错，生产高可用常采用 3 或 5 个投票成员，跨故障域部署，并验证快照及恢复。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "Redis 节点故障与命中率监控",
+      "content": "redis 集群出现异常节点怎么处理，有没有监控命中率",
+      "answer": "先看 `CLUSTER INFO`、`CLUSTER NODES`、槽覆盖、复制偏移、节点日志、资源和集群总线连通性。\nRedis Cluster 使用 PFAIL/FAIL 故障状态，Sentinel 使用 SDOWN/ODOWN，二者不要混写。确认是网络分区、超时、资源问题还是进程退出后再处理。\n满足多数派和副本资格时，Cluster 可提升 replica 接管槽。没有完整可用副本时，添加一个空副本或把槽指向其他节点不能找回已丢失数据，应先恢复原节点或一致性备份，明确损失范围再操作。\n命中率可对 `INFO stats` 的 keyspace_hits/misses 做采样差分，或计算监控窗口内 rate 的比例；分母为 0 时单独处理。累计比例会掩盖近期变化，还要结合延迟、淘汰与业务缓存语义。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Redis Sentinel 与 Cluster",
+      "content": "Redis 切片集群跟 Redis 普通的主从哨兵架构有什么区别",
+      "answer": "Sentinel 主要为一个或多个独立主副本组提供监控和故障转移，本身不存业务数据。每个组的主副本复制该组数据，读副本需处理异步延迟。\nRedis Cluster 用 16384 个哈希槽分片到多个 master，replica 复制其所属分片，可通过增主节点并迁移槽扩展容量和写入。跨槽多键操作有约束，客户端需支持 Cluster 协议。\nSentinel 故障转移由哨兵协商和授权；Cluster 由集群节点自身完成故障检测和副本选举。副本提升通常接管原 master 的槽，不等于把这些槽重新均匀分配给所有 master；重新分片是单独操作。两者都需评估异步复制带来的数据丢失窗口。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "etcd 性能与健康监控",
+      "content": "etcd 如何去监控它的性能",
+      "answer": "etcd 自带 Prometheus 格式的 `/metrics`，可在客户端监听地址或配置的 listen-metrics-urls 上抓取，不必为原生指标再部署一个 exporter；按监听配置提供 TLS/客户端证书和访问控制。\n关注 leader 是否存在、选主变化、失败/待处理 proposals、WAL fsync 与 backend commit 延迟、数据库大小/配额、磁盘空间、peer 网络延迟和资源饱和。\n使用带正确 endpoints、CA、证书和密钥的 `etcdctl endpoint health`、`endpoint status --write-out=table`、`member list` 辅助排查。监控各成员与多数派可用性，阈值结合基线设置，并验证快照和恢复流程。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Redis Cluster 建立与故障切换",
+      "content": "Redis 怎么做集群呢，主节点坏了如何切换呢？",
+      "answer": "Redis Cluster 将键分布到 16384 个哈希槽，由多个 master 分担数据，每个 master 可配置 replica。常见起步拓扑是 3 主 3 副本，并把主副本放到不同故障域。\n配置 cluster-enabled、节点地址、认证、持久化及客户端/集群总线连通性后，用 `redis-cli --cluster create <节点1:端口> ... <节点6:端口> --cluster-replicas 1` 创建；客户端需支持 Cluster 重定向。\n节点超时先出现 PFAIL，满足集群的故障报告条件后标记 FAIL。具备资格的 replica 请求具有投票资格的 master 授权，取得多数派后提升并接管原 master 的槽。这是 Redis Cluster 自身的选举协议，不是 Raft，也不依赖 Sentinel。\n复制是异步的，故障切换可能丢失尚未复制的写入；没有可用副本或多数派时不能保证自动恢复。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Redis 内存突增排查",
+      "content": "redis 从 2g 飙升到 7g 的话从业务上面你会如何排查",
+      "answer": "先确认 2G/7G 指 `used_memory`、`used_memory_rss` 还是容器/主机统计，不能直接归因于缓存数据。\n\n1. 对比 `INFO memory`、`INFO keyspace`、`INFO clients` 和持久化状态的时间线，检查内存碎片、客户端/复制缓冲以及 RDB/AOF rewrite 的 fork 写时复制峰值。\n2. 对照业务流量、发布、缓存键前缀、键数量、TTL 分布和写入速率，找出过期策略失效或无限增长的数据结构。\n3. 在可控负载下使用 SCAN、`MEMORY USAGE` 和 `redis-cli --bigkeys` 等；bigkeys 侧重结构大小，不能把所有类型的结果都当成精确字节排名，避免在线全量 KEYS。\n4. 核对 maxmemory、淘汰策略、热键/大键及缓冲限制。确认根因后修复写入和过期逻辑，再验证内存走势。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "奇数成员与多数派容错",
+      "content": "(各类中间件) 集群相关的资源，你认为是推荐奇数个还是偶数个呢，为什么？",
+      "answer": "不能笼统地说所有中间件都必须部署奇数个节点。奇数成员的收益主要适用于依赖多数派投票的成员集群，例如 etcd、ZooKeeper、Raft Controller Quorum 等。\n\n投票集群通常可容忍 `floor((n-1)/2)` 个成员故障。3 个成员可容忍 1 个，4 个成员通常仍只能容忍 1 个，因此第 4 个投票成员增加成本却不增加容错数；5 个可容忍 2 个。\n\n但 Kafka Broker、Redis 数据分片、普通工作节点或无投票语义的副本数量，应根据副本因子、容量、分区、故障域和读写模型设计，不能直接套用“奇数原则”。奇数节点也只是形成多数派的条件之一，并不能单独避免脑裂。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    }
+  ]
+}

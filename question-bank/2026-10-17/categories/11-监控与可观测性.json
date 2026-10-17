@@ -1,0 +1,109 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "OpenTelemetry Collector 部署模式",
+      "content": "OpenTelemetry Collector 支持哪两种主要部署模式？",
+      "answer": "Collector 常见两种部署模式：\n\n- Agent：靠近应用部署，例如 DaemonSet 或 sidecar，接收或采集本机信号并处理、转发。\n- Gateway：以集中服务接收多个 Agent/SDK 的数据，统一批处理、过滤、采样与导出。\n\n可以组合两种模式，但要明确每条流水线的数据来源，避免重复采集、重复导出。为接收器、处理器、导出器配置内存限制、批处理、超时、重试和队列，并监控丢弃量、队列与导出失败。\n\n不能认为所有处理器都无状态、可以随意负载均衡；tail sampling 等依赖同一 Trace 的数据汇聚，持久队列和文件位点也需要相应存储与调度设计。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "OpenTelemetry 语义约定",
+      "content": "OpenTelemetry 语义约定（Semantic Conventions）的主要目的是什么？",
+      "answer": "统一不同语言和框架的遥测数据命名规范，确保跨系统数据的可互操作性和一致性。",
+      "explanation": "语义约定统一遥测资源、属性与信号定义，使用时应核对约定版本和稳定性。现代 HTTP 约定使用 http.request.method、http.response.status_code，数据库约定可使用 db.query.text 等；http.method/http.status_code/db.statement 属于旧约定，迁移时应核对埋点库支持并评估敏感查询内容脱敏，不能混写成所有版本必需的名称。",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Trace 与 Span 的关系",
+      "content": "在 OpenTelemetry 中，Span 的主要作用是什么？",
+      "answer": "Trace 描述一次分布式操作，由多个 Span 关联起来。Span 表示一个有开始、结束时间的操作，通常有 trace ID、span ID、父 Span ID，并包含名称、属性、事件和状态。\n\n例如 HTTP 入口创建服务端 Span，调用数据库和下游服务创建子 Span；跨进程传播上下文后，可以关联调用链、延迟与错误。\n\n父子关系形成主要调用结构，Span Link 还可关联其他执行或 Trace，适合异步、批处理等场景，不能把全部关联都限定成严格的一棵树。不同机器的时钟、采样与上下文传播错误都会影响观测结果。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "OpenTelemetry 架构与 Collector 流水线",
+      "content": "OpenTelemetry 的主要组成是什么？Collector 流水线如何组织？",
+      "answer": "OpenTelemetry 通过 API、SDK、自动/手工插桩、协议和工具生成、采集、处理并导出指标、日志和追踪；它通常不负责长期存储与查询。\n\nCollector 的典型流水线是 Receiver → Processor → Exporter：接收数据，进行批处理、过滤或采样，再写入后端。一个 Collector 可配置多条 metrics/logs/traces 流水线。\n\nExtensions 提供健康检查、认证等辅助能力；Connectors 可连接流水线或进行信号转换。部署 Agent、Gateway 或组合模式应按流量、故障恢复和处理器状态来设计，不能把“三个流水线组件”当作 OpenTelemetry 全部架构。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "OpenTelemetry 与 Prometheus 的分工",
+      "content": "OpenTelemetry 与 Prometheus 在监控数据采集上的主要区别是什么？",
+      "answer": "OpenTelemetry 是厂商中立的观测框架/工具集，提供埋点、API/SDK、语义约定与 Collector，处理 traces、metrics、logs，通常把数据送到后端，并非长期存储和查询系统本身。\nPrometheus 聚焦指标抓取、时序存储、PromQL 和规则计算，常用 pull；也可输出 remote_write，并按配置接收 remote_write/OTLP metrics。\n两者可组合：应用用 OTel 生成指标，经 Collector 或 OTLP 接到 Prometheus，链路和日志发送到各自后端。",
+      "explanation": "比较的是观测数据生成/处理层和指标监控后端，不能只记为“OTel 采多种数据，Prometheus 永远仅能拉取”。实际接收能力和协议需按版本开启。",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Zabbix 架构、采集与告警",
+      "content": "zabbix 的原理吧，除了 zabbix 还用过什么监控软件吗",
+      "answer": "Zabbix Server 负责监控调度、处理、触发器和告警；数据库保存配置与历史，Web 前端提供管理和展示，Proxy 可在远端汇聚并缓冲数据。\n\nAgent 被动检查由 Server/Proxy 发起查询；主动检查由 Agent 获取检查列表后主动采集并发送结果。另可使用 SNMP、HTTP、IPMI、外部检查等方式，按资产和支持能力配置。\n\n通过模板定义 items 与发现规则，由 triggers 判断条件，actions 关联通知和自动动作。设计保留期、采集频率、超时和 Proxy 容量；验证告警恢复、升级、权限和误报。具体能力依版本与插件，不应把 Agent 的主动检查误解为 Server 主动推送全部指标。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Prometheus 与 Zabbix 的选择",
+      "content": "你觉得 prometheus 跟 zabbix 有什么区别，你会怎么选择",
+      "answer": "Zabbix 提供主机、网络设备、应用等综合监控，支持 agent 主动/被动检查、SNMP 等，并集成界面和告警。Prometheus 聚焦指标时序、标签、PromQL 和规则，常用 HTTP pull 与动态服务发现，告警通知通常交给 Alertmanager。\nPrometheus 自带查询界面，也常配 Grafana；支持 remote_write 输出，并可按版本/配置开启 remote_write 或 OTLP metrics 接收，不能说只能 pull。\n选型按对象、采集协议、动态规模、查询、告警和维护能力决定，Zabbix 也能监控容器，Prometheus 也能监控传统主机。两者可以互补，不是只能按“传统 IT/云原生”二选一。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "应用假死的监测与处理",
+      "content": "假设需要监控的应用处于假死状态应该怎样监控到呢？",
+      "answer": "应用卡死应从业务健康接口、真实请求成功率和延迟确认，再检查线程/协程栈、锁等待、GC、连接池、依赖超时、CPU 和 I/O。CPU 低或日志停止都不是充分证据。\nreadiness 失败会将端点标记为未就绪，普通 Service 通常停止向其转发新流量；liveness 连续失败达到阈值后触发容器重启；startup 为慢启动阶段留出窗口。它们不保证所有现有连接立即断开，也不等于重建整个 Pod。\n先保留必要的诊断信息，再按预案摘流、重启或回滚。避免把外部依赖故障直接绑定到 liveness，造成全体容器重启风暴。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "突增流量的定位与止损",
+      "content": "如果流量突然增高你会如何去定位应用，实时流量监控的命令用过吗",
+      "answer": "流量突然升高时，先确认是带宽、包速率、连接数还是应用 QPS 上升：\n\n1. 节点/进程：`sar -n DEV 1`、`ip -s link`、`ss -s`；iftop/nethogs 可辅助查看实时流量，但生产使用要注意权限和开销。\n2. 入口：查看负载均衡、Ingress/Nginx 的 QPS、状态码、延迟、URI、来源和连接数。\n3. 应用：结合 Prometheus/APM 查看实例、接口、错误率、线程池、连接池和依赖延迟。\n4. 网络：必要时使用 `tcpdump` 限定接口、主机、端口和抓包大小，避免无过滤全量抓包。\n5. 判断是否正常业务、重试风暴、爬虫/攻击、发布变化或下游变慢，并采取限流、扩容、熔断或封禁等对应措施。\n\n面试时请如实说明本人实际用过的命令和案例；未使用过某工具不要写“用过”。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Prometheus 告警规则与验证",
+      "content": "有实际搭建过 Prometheus 的监控告警项吗",
+      "answer": "Prometheus 按规则表达式和持续时间判断告警，交给 Alertmanager 做路由、分组、抑制和通知。例如检测抓取目标持续不可用：\n\n```yaml\ngroups:\n  - name: target-health\n    rules:\n      - alert: TargetDown\n        expr: up == 0\n        for: 2m\n        labels:\n          severity: warning\n        annotations:\n          summary: Target scrape failed\n```\n\n`up` 反映抓取是否成功，不直接代表业务交易正常。业务告警还应基于错误率、延迟、队列或 SLO，并处理缺失指标、低流量与恢复条件。\n\n用 `promtool check rules` 检查语法，使用规则测试与实际通知验证从触发到恢复的链路；阈值和 for 应按基线与目标设置，避免只有固定 CPU 阈值的噪声告警。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Kubernetes 中的 Prometheus 存储",
+      "content": "在 k8s 里如何部署 Prometheus? 如何存储数据？",
+      "answer": "在 Kubernetes 中可用 Prometheus Operator 或 prometheus-community/kube-prometheus-stack 部署，配置服务发现、抓取对象、资源、告警和访问权限。\n本地 TSDB 使用持久卷保存 WAL 和数据块，应选择满足其文件系统语义与性能要求的块存储/本地盘，例如基于可靠块卷的 ext4/XFS。PVC 是申请存储的接口，不代表所有后端都适合；Prometheus 官方不支持 NFS（包括 EFS）作为本地 TSDB 存储，Ceph RBD 与 CephFS 也不能混为一谈。\n规划 retention 时间/容量、空间余量和故障恢复。长期存储或多副本查询可结合 Thanos、Mimir 等方案；remote_write、对象存储和 HA 去重应按所选组件设计。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "hard"
+    },
+    {
+      "title": "全链路监控的对象与指标",
+      "content": "你们的监控系统主要有监控哪些信息呢",
+      "answer": "1. 基础设施监控：服务器的 CPU、内存、磁盘、网络，节点的存活状态。\n2. 应用监控：应用的 QPS、响应时间、错误率、内存使用、GC 情况。\n3. 数据库监控：数据库的连接数、慢查询、主从同步延迟、锁等待。\n4. 中间件监控：Redis 的命中率、连接数，Kafka 的消息堆积、消费速率，ES 的分片状态、索引大小。\n5. 业务监控：业务的访问量、转化率、订单量等业务指标。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Pod 资源、状态与业务监控",
+      "content": "你之前如何对 pod 资源实现监控？包括资源、存活等等",
+      "answer": "Pod 监控应把不同数据源分开：\n\n1. CPU、内存等容器资源使用量：由 kubelet/cAdvisor 暴露，可由 Prometheus 抓取；metrics-server 提供面向 HPA 和 kubectl top 的基础资源指标。\n2. Kubernetes 对象状态：kube-state-metrics 从 API Server 生成 Deployment、Pod、PVC 等对象状态指标。\n3. 节点指标：node-exporter 采集宿主机 CPU、内存、磁盘、文件系统和网络等操作系统指标，不是 Pod 资源采集器。\n4. 存活与就绪：livenessProbe 影响容器重启，readinessProbe 决定是否接收 Service 流量，startupProbe 保护慢启动应用。\n5. 还应结合应用指标、日志、Events、链路追踪和告警规则。\n\n个人经历部分应说明真实使用的采集链路、仪表盘、告警阈值和处理案例。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    }
+  ]
+}

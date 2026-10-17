@@ -1,0 +1,61 @@
+{
+  "formatVersion": 1,
+  "questions": [
+    {
+      "title": "Docker 架构与容器隔离",
+      "content": "docker 的工作原理",
+      "answer": "Docker 由客户端、daemon/API、镜像/容器/网络/卷等对象组成；Docker Engine 可通过 containerd 和 OCI 运行时执行容器。\n\n容器通常共享宿主机内核，使用 namespaces 隔离视图、cgroups 管理资源，并结合 capabilities、seccomp 和其他安全控制；它不是为每个应用运行一个完整虚拟机。\n\n镜像提供分层的构建产物，容器有可写层，持久数据通常放入 volume 或受管理的挂载。不能把容器可写层当作可靠数据库备份。\n\n存储实现依版本和配置：传统部署常见 overlay2 storage driver；较新的默认安装也可能使用 containerd image store/snapshotters，应以 `docker info` 为准，不要认为所有 Docker 都固定使用 overlay2。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Dockerfile 的作用",
+      "content": "dockerfile 是干什么的",
+      "answer": "Dockerfile 是声明镜像构建步骤的文件，构建器结合 build context 执行 FROM、COPY、RUN 等指令生成镜像；它不是容器运行时的普通 Shell 脚本。\n\n使用 .dockerignore 控制构建上下文，固定基础镜像版本或 digest，合理安排层缓存，并用多阶段构建减少最终产物。明确 WORKDIR、USER 和启动命令；生产容器尽量以适当的非 root 权限运行。\n\nCOPY 复制上下文文件；ADD 还有额外语义，普通复制优先选择明确的 COPY。exec 形式 ENTRYPOINT/CMD 有利于信号处理，但应用本身仍需正确处理终止。敏感信息应通过安全的构建秘密或运行时凭证机制提供，不能写进镜像层。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Docker 常用管理命令",
+      "content": "docker 常用命令",
+      "answer": "常用命令按用途记忆，以下 myapp:1.0 是示例版本，应替换为已验证镜像：\n\n```bash\ndocker build -t myapp:1.0 .\ndocker pull myapp:1.0\ndocker run -d --name demo -p 8080:8080 myapp:1.0\ndocker ps\ndocker ps -a\ndocker logs --tail 100 demo\ndocker inspect demo\ndocker exec -it demo sh\ndocker stop demo\ndocker rm demo\ndocker image ls\ndocker save -o myapp-1.0.tar myapp:1.0\ndocker load -i myapp-1.0.tar\n```\n\n`exec ... sh` 仅在镜像包含 sh 时可用，slim/distroless 镜像可能没有 Shell，不能固定假设有 /bin/bash。推送要使用实际仓库地址与授权，镜像删除前确认依赖和数据边界；save/load 与容器文件系统 export/import 不同。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Kubernetes 与 Docker 的关系",
+      "content": "K8S 和 Docker 的区别？说一下你的观点 (使用场景等等)",
+      "answer": "Docker 提供镜像构建、分发及 Docker Engine 容器管理等工具，Compose 可声明同机多容器应用。Kubernetes 是跨节点的声明式编排平台，管理调度、副本、发布、服务发现与扩缩容。\n现代 Kubernetes 通过 CRI 使用 containerd、CRI-O 等运行时；1.24 已移除内置 dockershim，Docker Engine 需要 cri-dockerd 等适配层接入。由 Docker 构建的兼容 OCI 镜像仍可在 Kubernetes 上运行，不要求节点安装 Docker Engine。\n单机/开发环境可用 Docker/Compose；有集群编排需求时再评估 Kubernetes，选择依据是可靠性、规模、自动化和维护能力。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Docker 镜像构建、导出与导入",
+      "content": "Docker 镜像如何构建、导出为文件并重新导入？",
+      "answer": "构建镜像：\n\n```bash\ndocker build -t myapp:1.0 .\n```\n\n把已有镜像导出为 tar：\n\n```bash\ndocker save -o myapp-1.0.tar myapp:1.0\n```\n\n重新导入：\n\n```bash\ndocker load -i myapp-1.0.tar\n```\n\n`docker build` 是根据 Dockerfile 构建镜像；`docker save/load` 用于镜像归档。不要与 `docker export/import` 混淆，后者处理容器文件系统快照且不会完整保留镜像历史和元数据。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "medium"
+    },
+    {
+      "title": "Dockerfile ARG、ENTRYPOINT 与 CMD",
+      "content": "DockerFILE 中的 ARG 是什么意思，有什么作用？ENTRYPOINT 和 CMD 有什么区别？",
+      "answer": "ARG 定义构建期参数，可通过 `docker build --build-arg VERSION=...` 传入；它不是容器运行期环境变量。多阶段构建应按作用域在需要的 stage 声明/继承，运行时配置用 ENV 等方式。ARG 不适合传密钥，构建秘密使用 BuildKit secret mount。\nCMD 提供默认命令或默认参数，docker run 的位置参数会覆盖它。exec 形式 ENTRYPOINT 指定可执行程序，CMD/run 参数通常追加为参数；`--entrypoint` 可以覆盖入口。\n\n```dockerfile\nENTRYPOINT [\"echo\", \"hello\"]\nCMD [\"world\"]\n```\n默认输出 hello world，传 test 则输出 hello test。shell 形式 ENTRYPOINT 的参数、信号及 PID 1 行为不同，不能套用这个规则；服务进程通常优先 exec 形式。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    },
+    {
+      "title": "Docker 容器进程查看",
+      "content": "docker 容器的进程可以怎么查看",
+      "answer": "可以从宿主机直接查看，也可以在容器内执行进程工具：\n\n```bash\ndocker top demo\ndocker exec demo ps aux\ndocker exec -it demo sh\n```\n\n`docker top` 不要求容器镜像内安装 ps，通常更可靠；`docker exec` 需要补全容器名，而且精简镜像可能没有 bash 或 ps。还可用 `docker inspect demo` 查看入口命令、PID 和状态，再结合宿主机的 `nsenter`、`ps` 或监控系统排查。\n\ndemo 是示例容器名，按实际对象替换。",
+      "explanation": "",
+      "categoryId": null,
+      "difficulty": "easy"
+    }
+  ]
+}
