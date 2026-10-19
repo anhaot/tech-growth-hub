@@ -22,7 +22,7 @@ openssl rand -hex 32
 
 | 变量 | 用途 |
 | --- | --- |
-| `APP_VERSION` | 本次本地构建的镜像标签，例如 `v261017-2`；后续构建使用新标签 |
+| `APP_VERSION` | 本次本地构建的镜像标签，例如 `v261019-1`；后续构建使用新标签 |
 | `WEB_PORT` | Web 对外端口，默认 `10089`；端口被占用时可修改 |
 | `ALLOWED_ORIGINS` | 浏览器实际访问来源，包含协议、域名或 IP、非默认端口；多个来源以逗号分隔 |
 | `AUTH_COOKIE_SECURE` | 默认 `auto`，按 HTTPS / HTTP 设置 Cookie；`true` 要求通过 HTTPS 登录 |
@@ -115,7 +115,7 @@ cd ../web
 npm ci
 npm run build
 cd ..
-tar -czf tech-growth-hub-v261017-2-linux-amd64.tar.gz \
+tar -czf tech-growth-hub-v261019-1-linux-amd64.tar.gz \
   LICENSE api/dist api/node_modules api/package.json api/package-lock.json \
   api/.env.example web/dist
 ```
@@ -128,7 +128,7 @@ tar -czf tech-growth-hub-v261017-2-linux-amd64.tar.gz \
 
 ```bash
 sudo mkdir -p /opt/tech-growth-hub
-sudo tar -xzf tech-growth-hub-v261017-2-linux-amd64.tar.gz -C /opt/tech-growth-hub
+sudo tar -xzf tech-growth-hub-v261019-1-linux-amd64.tar.gz -C /opt/tech-growth-hub
 sudo useradd --system --user-group --home-dir /opt/tech-growth-hub --shell /usr/sbin/nologin tech-growth-hub
 sudo install -d -o tech-growth-hub -g tech-growth-hub /opt/tech-growth-hub/api/data /opt/tech-growth-hub/api/uploads
 sudo install -d -m 750 -o root -g tech-growth-hub /etc/tech-growth-hub

@@ -82,6 +82,70 @@ test('失效分类引用可以统一改为未分类后导入', async ({ page, re
   expect(await categories.json()).toHaveLength(0);
 });
 
+test('未分类题可手动归类和取消归类，保留独立标题、正文和收藏', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_manual_category`);
+  const login = await apiLogin(request, user.username, user.password);
+  const headers = { Authorization: `Bearer ${login.token}` };
+  const categoryResponse = await request.post(`${apiBaseUrl}/categories`, { headers, data: { name: '手动归类验收' } });
+  expect(categoryResponse.ok()).toBeTruthy();
+  const category = await categoryResponse.json();
+  const original = { title: '保留独立短标题', content: '这是手动归类题干', answer: '原答案', explanation: '原解析', difficulty: 'hard' as const };
+  const question = await createQuestion(request, login.token, original);
+  expect((await request.post(`${apiBaseUrl}/questions/${question.id}/progress`, { headers, data: { mode: 'study', isBookmarked: true } })).ok()).toBeTruthy();
+  const before = await (await request.get(`${apiBaseUrl}/questions/${question.id}/progress?mode=study`, { headers })).json();
+  await primeAuth(page, login);
+  await page.goto('/questions');
+  for (const categoryId of [category.id, '']) {
+    await page.getByRole('button', { name: '编辑题目', exact: true }).click();
+    const modal = page.getByTestId('question-modal');
+    await modal.getByRole('combobox', { name: '题目分类' }).selectOption(categoryId);
+    const saving = page.waitForRequest(req => req.method() === 'PUT' && req.url().endsWith(`/questions/${question.id}`));
+    await page.getByTestId('question-save-button').click();
+    expect((await saving).postDataJSON()).toEqual({ difficulty: 'hard', categoryId, expectedRevision: categoryId ? 1 : 2 });
+    await expect(modal).toBeHidden();
+    expect(await getQuestion(request, login.token, question.id)).toMatchObject({ ...original, category_id: categoryId || null });
+    expect(await (await request.get(`${apiBaseUrl}/questions/${question.id}/progress?mode=study`, { headers })).json()).toEqual(before);
+  }
+});
+
+test('添加题目关闭重开后，迟到的 AI 答案不会覆盖新题', async ({ page, request }) => {
+  const user = await registerUser(request, `${Date.now()}_late_answer`);
+  const login = await apiLogin(request, user.username, user.password);
+  let releaseAnswer!: () => void;
+  const ready = new Promise<void>(resolve => { releaseAnswer = resolve; });
+  await page.route('**/api/ai/answer-drafts/raw', async route => {
+    const { questions } = route.request().postDataJSON();
+    await ready;
+    await route.fulfill({ json: { drafts: [{ clientId: questions[0].clientId, answer: '旧题迟到的答案', explanation: '旧解析', difficulty: 'hard' }] } });
+  });
+  await primeAuth(page, login);
+  await page.goto('/questions');
+  await page.getByTestId('question-add-button').click();
+  await page.getByTestId('question-content-input').fill('旧题');
+  const requested = page.waitForRequest('**/api/ai/answer-drafts/raw');
+  await page.getByRole('button', { name: 'AI 生成答案', exact: true }).click();
+  await requested;
+  const response = page.waitForResponse('**/api/ai/answer-drafts/raw');
+  try {
+    await expect(page.getByTestId('question-save-button')).toBeDisabled();
+    await expect(page.getByTestId('question-content-input')).toBeDisabled();
+    await page.getByRole('button', { name: '关闭题目编辑', exact: true }).click();
+    await page.getByTestId('question-add-button').click();
+    await page.getByTestId('question-content-input').fill('新题');
+  } finally {
+    releaseAnswer();
+  }
+  await (await response).finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await expect(page.getByTestId('question-answer-input')).toHaveValue('');
+  await expect(page.getByTestId('question-explanation-input')).toHaveValue('');
+  await page.getByTestId('question-save-button').click();
+  await expect(page.getByTestId('question-modal')).toBeHidden();
+  const saved = await (await request.get(`${apiBaseUrl}/questions`, { headers: { Authorization: `Bearer ${login.token}` } })).json();
+  expect(saved.total).toBe(1);
+  expect(saved.data[0]).toMatchObject({ content: '新题', answer: '', category_id: null, difficulty: 'medium' });
+});
+
 test('AI 生题可在空分类中创建新分类，失败时保留草稿供重试', async ({ page, request }) => {
   const user = await registerUser(request, `${Date.now()}_aicat`);
   const login = await apiLogin(request, user.username, user.password);

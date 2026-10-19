@@ -89,3 +89,38 @@ test('分类筛选贯穿题库、学习和收藏，设置只保留分类管理',
   await expect(page.getByText('分类回归', { exact: true })).toBeVisible();
   await expect(page.getByText(/标签健康|标签管理|标签别名/)).toHaveCount(0);
 });
+
+for (const mode of ['study', 'quiz']) {
+  test(`${mode} 修改分类后刷新筛选结果，切题放弃未保存编辑`, async ({ page, request }) => {
+    const user = await registerUser(request, `${Date.now()}_${mode}_reclassify`);
+    const login = await apiLogin(request, user.username, user.password);
+    const headers = { Authorization: `Bearer ${login.token}` };
+    const categoryResponse = await request.post(`${apiBaseUrl}/categories`, { headers, data: { name: '学习归类验收' } });
+    expect(categoryResponse.ok()).toBeTruthy();
+    const category = await categoryResponse.json();
+    const question = await createQuestion(request, login.token, { title: '待移出分类', content: '待移出分类题干', answer: '保留原答案', categoryId: category.id });
+    const other = await createQuestion(request, login.token, { title: '其他题', content: '其他题干', answer: '其他答案' });
+    await primeAuth(page, login);
+    await page.goto(`/${mode}`);
+    const filter = page.getByRole('combobox').filter({ has: page.locator(`option[value="${category.id}"]`) }).first();
+    await filter.selectOption(category.id);
+    await expect(page.getByTestId('learning-question-content')).toContainText('待移出分类题干');
+    await page.getByRole('button', { name: '编辑当前题目' }).click();
+    await page.getByRole('combobox', { name: '题目分类' }).selectOption('');
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    await expect(page.getByText('暂无题目', { exact: true })).toBeVisible();
+    const updated = await (await request.get(`${apiBaseUrl}/questions/${question.id}`, { headers })).json();
+    expect(updated).toMatchObject({ title: question.title, content: question.content, answer: question.answer, category_id: null });
+    await filter.selectOption('');
+    await expect(page.getByTestId('learning-question-content')).toBeVisible();
+    await page.getByRole('spinbutton', { name: '跳转题号' }).fill('1');
+    await page.getByRole('button', { name: '跳转', exact: true }).click();
+    await expect(page.getByRole('spinbutton', { name: '跳转题号' })).toHaveValue('1');
+    await page.getByRole('button', { name: '编辑当前题目' }).click();
+    await page.locator('textarea').first().fill('不能串到下一题的内容');
+    await page.getByRole('button', { name: '下一题', exact: true }).last().click();
+    await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('learning-question-content')).toBeVisible();
+    expect((await (await request.get(`${apiBaseUrl}/questions/${other.id}`, { headers })).json()).content).toBe(other.content);
+  });
+}

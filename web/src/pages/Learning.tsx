@@ -171,6 +171,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
 
   const saveEdit = async () => {
     if (!currentQuestion || supplementField) return;
+    const sequence = requestSequence.current;
 
     try {
       const response = await questionApi.update(currentQuestion.id, {
@@ -187,10 +188,14 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
         } : {}),
       });
 
-      setQuestions(prev => prev.map(q => q.id === currentQuestion.id ? response.data : q));
-
+      if (sequence !== requestSequence.current) return;
       setIsEditing(false);
       toast.success('保存成功');
+      if (categoryId && response.data.category_id !== categoryId) {
+        await fetchQuestions(false, currentIndex);
+      } else {
+        setQuestions(prev => prev.map(q => q.id === currentQuestion.id ? response.data : q));
+      }
     } catch (error: any) {
       toast.error(error.response?.data?.error || '保存失败');
     }
@@ -225,6 +230,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
   useEffect(() => { setJumpPosition(String(currentIndex + 1)); }, [currentIndex]);
 
   const currentQuestion = questions[currentIndex - pageStart];
+  useEffect(() => { setIsEditing(false); }, [currentQuestion?.id, categoryId, mode]);
   useEffect(() => {
     setSupplementField(null);
     setSupplementPreview(null);
@@ -706,6 +712,7 @@ export const LearningPage: React.FC<LearningPageProps> = ({ mode }) => {
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700 mb-1">分类</label>
                     <select
+                      aria-label="题目分类"
                       value={editForm.categoryId}
                       onChange={(e) => setEditForm({ ...editForm, categoryId: e.target.value })}
                       disabled={!canEditQuestionMeta}

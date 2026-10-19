@@ -858,6 +858,39 @@ test('AI requests refuse redirects and retain the timeout while reading the body
   }
 });
 
+test('manual classification preserves question content, progress and history and enforces metadata permissions', async () => {
+  const owner = await createUser('manual-category-owner', 'manual-category-owner@example.com', 'Password123');
+  const other = await createUser('manual-category-other', 'manual-category-other@example.com', 'Password123');
+  const question = await createQuestion(owner.user.id, 'Keep the original short title');
+  const auth = { Authorization: `Bearer ${owner.token}` };
+  const category = await app.post('/api/categories').set(auth).send({ name: '手动归类' });
+  const foreign = await app.post('/api/categories').set('Authorization', `Bearer ${other.token}`).send({ name: '别人的分类' });
+  assert.equal(category.status, 201); assert.equal(foreign.status, 201);
+  await app.post(`/api/questions/${question.id}/progress`).set(auth).send({ mode: 'study', isBookmarked: true });
+  const progress = await db.getLearningProgress(owner.user.id, question.id, 'study');
+  const normal = await db.getUserById(owner.user.id);
+  await db.updateUser(owner.user.id, { permissions: { ...NO_PERMISSIONS, question_view: true, question_edit_meta: true } });
+  const update = (body: object) => app.put(`/api/questions/${question.id}`).set(auth).send(body);
+  const assigned = await update({ categoryId: category.body.id, expectedRevision: 1 });
+  assert.equal(assigned.status, 200); assert.equal(assigned.body.category_id, category.body.id);
+  for (const key of ['id', 'title', 'content', 'answer', 'explanation', 'difficulty'] as const) assert.equal(assigned.body[key], question[key]);
+  assert.equal((await update({ categoryId: '', expectedRevision: 1 })).status, 409);
+  assert.equal((await update({ answer: 'forbidden' })).status, 403);
+  assert.equal((await update({ categoryId: foreign.body.id })).status, 400);
+  assert.equal((await update({ categoryId: randomUUID() })).status, 400);
+  assert.equal((await update({ categoryId: '', expectedRevision: 2 })).body.category_id, null);
+  await db.updateUser(owner.user.id, { permissions: { ...NO_PERMISSIONS, question_view: true } });
+  assert.equal((await update({ categoryId: category.body.id })).status, 403);
+  await db.updateUser(owner.user.id, { permissions: normal!.permissions });
+  assert.equal((await update({ categoryId: category.body.id, expectedRevision: 3 })).status, 200);
+  assert.equal((await app.delete(`/api/categories/${category.body.id}`).set(auth)).status, 200);
+  const remaining = await db.getQuestionById(question.id);
+  assert.equal(remaining?.category_id, null); assert.equal(remaining?.title, question.title);
+  assert.deepEqual(await db.getLearningProgress(owner.user.id, question.id, 'study'), progress);
+  const versions = await db.getQuestionVersions(question.id);
+  assert.equal(versions.total, 4);
+});
+
 test('versions record edits, reject stale writes, restore as a new version and survive backups', async () => {
   const user = await createUser('versions-user', 'versions-user@example.com', 'Password123');
   const other = await createUser('versions-other', 'versions-other@example.com', 'Password123');

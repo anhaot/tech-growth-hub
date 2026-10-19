@@ -735,6 +735,7 @@ export const QuestionsPage: React.FC = () => {
                                   setEditingQuestion(question);
                                   setShowModal(true);
                                 }}
+                                aria-label="编辑题目"
                                 className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                               >
                                 <Edit size={16} />
@@ -904,6 +905,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [generatingAnswer, setGeneratingAnswer] = useState(false);
+  const answerSequence = useRef(0);
   const [formData, setFormData] = useState({
     content: '',
     answer: '',
@@ -913,6 +915,8 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
   });
 
   useEffect(() => {
+    answerSequence.current++;
+    setGeneratingAnswer(false);
     if (question) {
       setFormData({
         content: question.content,
@@ -930,14 +934,17 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         categoryId: '',
       });
     }
-  }, [question]);
+    return () => { answerSequence.current++; };
+  }, [question, isOpen]);
 
   const handleGenerateAnswer = async () => {
+    if (generatingAnswer || loading) return;
     if (!formData.content.trim()) {
       toast.error('请先填写题目内容');
       return;
     }
     setGeneratingAnswer(true);
+    const sequence = ++answerSequence.current;
     try {
       const clientId = crypto.randomUUID();
       const response = await aiApi.answerDraftsRaw({
@@ -949,6 +956,8 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         mode: 'practice',
       });
       const draft = response.data.drafts[0];
+      if (sequence !== answerSequence.current) return;
+      if (!draft?.answer?.trim()) throw new Error('AI 未返回有效答案');
       setFormData((current) => ({
         ...current,
         answer: draft.answer,
@@ -957,14 +966,16 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
       }));
       toast.success('AI 答案已生成，请检查后保存');
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'AI 生成答案失败');
+      if (sequence === answerSequence.current) toast.error(error.response?.data?.error || 'AI 生成答案失败');
     } finally {
-      setGeneratingAnswer(false);
+      if (sequence === answerSequence.current) setGeneratingAnswer(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || generatingAnswer) return;
+    if (!formData.content.trim()) { toast.error('请填写题目内容'); return; }
     setLoading(true);
 
     try {
@@ -978,10 +989,12 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
           categoryId: string;
         }> = {};
         if (canEditContent) {
-          data.title = formData.content.substring(0, 100);
-          data.content = formData.content;
-          data.answer = formData.answer;
-          data.explanation = formData.explanation;
+          if (formData.content !== question.content) {
+            data.title = formData.content.substring(0, 100);
+            data.content = formData.content;
+          }
+          if (formData.answer !== question.answer) data.answer = formData.answer;
+          if (formData.explanation !== (question.explanation || '')) data.explanation = formData.explanation;
         }
         if (canEditMeta) {
           data.difficulty = formData.difficulty;
@@ -1011,9 +1024,11 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
 
   if (!isOpen) return null;
 
+  const close = () => { if (!loading) onClose(); };
+
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-transparent" onClick={onClose} />
+      <div className="absolute inset-0 bg-transparent" onClick={close} />
       <div className="relative flex min-h-full items-center justify-center px-4 py-6">
       <div data-testid="question-modal" className="app-modal-panel w-full max-w-2xl max-h-[90vh] overflow-hidden">
         <div className="app-modal-header flex items-center justify-between px-6 py-4">
@@ -1023,7 +1038,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
             </div>
             <h2 className="text-lg font-semibold text-gray-900">{question ? '编辑题目' : '添加题目'}</h2>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+          <button onClick={close} disabled={loading} aria-label="关闭题目编辑" className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
             <X size={20} />
           </button>
         </div>
@@ -1036,7 +1051,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all font-mono text-sm"
               value={formData.content}
               onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-              disabled={Boolean(question) && !canEditContent}
+              disabled={generatingAnswer || (Boolean(question) && !canEditContent)}
               rows={6}
               required
               placeholder="支持Markdown格式，如：**粗体**、`代码`、列表等"
@@ -1056,7 +1071,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all font-mono text-sm"
               value={formData.answer}
               onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
-              disabled={Boolean(question) && !canEditContent}
+              disabled={generatingAnswer || (Boolean(question) && !canEditContent)}
               rows={6}
               placeholder="可以留空后保存，也可以先让 AI 生成"
             />
@@ -1068,7 +1083,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all font-mono text-sm"
               value={formData.explanation}
               onChange={(e) => setFormData({ ...formData, explanation: e.target.value })}
-              disabled={Boolean(question) && !canEditContent}
+              disabled={generatingAnswer || (Boolean(question) && !canEditContent)}
               rows={3}
             />
           </div>
@@ -1078,7 +1093,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
               <select
                 value={formData.difficulty}
                 onChange={(e) => setFormData({ ...formData, difficulty: e.target.value })}
-                disabled={Boolean(question) && !canEditMeta}
+                disabled={generatingAnswer || (Boolean(question) && !canEditMeta)}
                 className="select-field w-full px-4 pr-10 py-3 text-gray-700 bg-gray-50 focus:bg-white cursor-pointer"
               >
                 <option value="easy">简单</option>
@@ -1089,12 +1104,13 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">分类</label>
               <select
+                aria-label="题目分类"
                 value={formData.categoryId}
                 onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
                 disabled={Boolean(question) && !canEditMeta}
                 className="select-field w-full px-4 pr-10 py-3 text-gray-700 bg-gray-50 focus:bg-white cursor-pointer"
               >
-                <option value="">请选择分类</option>
+                <option value="">未分类</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -1107,7 +1123,8 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
         <div className="flex flex-col-reverse justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-4 py-4 sm:flex-row sm:px-6">
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
+            disabled={loading}
             className="min-h-11 w-full px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 transition-all sm:w-auto"
           >
             取消
@@ -1115,7 +1132,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({
           <button
             data-testid="question-save-button"
             onClick={handleSubmit}
-            disabled={loading}
+            disabled={loading || generatingAnswer}
             className="min-h-11 w-full px-5 py-2.5 bg-gradient-to-r from-violet-500 to-purple-600 rounded-xl text-white hover:from-violet-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed sm:w-auto"
           >
             {loading ? '保存中...' : question ? '更新' : '创建'}

@@ -23,3 +23,5 @@ Web 告警来自 Tailwind/PostCSS/glob 构建链；App 告警涉及 Expo CLI、M
 构建时仅使用可信源码、配置、glob 和 CSS 输入；开发/打包服务限制在可信环境中。生产使用构建后的静态 Web 和独立 APK，避免将 Vite、Metro、Expo 开发服务暴露到公网。上述措施不能消除依赖本身的问题。本次结果不能表述为“全依赖零漏洞”或完整安全认证。
 
 复查：分别在 `api/`、`web/`、`mobile/` 运行 `npm audit`；另在 `web/` 运行 `npm audit --omit=dev`。通告和修复状态可能变化，以复查结果为准。
+
+2026-10-19 复查：API 全依赖、Web 生产依赖仍为 0；Web 全依赖仍为 5 high / 2 moderate，App 仍为 18 high / 8 moderate。三个锁文件未变，本次未执行强制升级。
