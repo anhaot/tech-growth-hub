@@ -49,10 +49,6 @@ function normalizeProfile(profile: Partial<DatabaseProfile>): DatabaseProfile | 
   };
 }
 
-export function getDatabaseRuntimeConfigPath(): string {
-  return runtimeConfigPath;
-}
-
 export function readDatabaseRuntimeState(): DatabaseRuntimeState {
   try {
     if (!fs.existsSync(runtimeConfigPath)) {

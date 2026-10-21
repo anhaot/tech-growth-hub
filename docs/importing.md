@@ -1,6 +1,6 @@
 # 分类导入与 AI 入库
 
-当前推荐 API/Web 版本：**v261019-1**。完整题库：[单文件 JSON](../question-bank/2026-10-17/tech-growth-hub-question-bank-20261017.json)。安卓 APK 仍使用 1.2.9。
+带分类 JSON 导入需要 API/Web v261017-2 或更新版本。示例题库：[单文件 JSON](../question-bank/2026-10-17/tech-growth-hub-question-bank-20261017.json)。
 
 ## 默认与可选行为
 

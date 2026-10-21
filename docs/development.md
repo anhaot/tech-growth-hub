@@ -324,7 +324,7 @@ npm run export:android
 
 `POST /api/auth/session` 重新签发当前用户的登录 Cookie，用于显式应用新有效期。`forever` 不写入 JWT `exp`，认证请求续期 Cookie。旧版令牌在原期限内兼容；第一次改密后，旧版令牌也会被拒绝。
 
-E2E 默认使用 API `3102` 和 Web `4173`；端口冲突时可执行 `E2E_API_PORT=43102 E2E_WEB_PORT=44173 npm run e2e`。测试数据库和运行时配置按 API 端口隔离，测试不使用部署数据库。产品截图用例默认跳过，只有显式设置 `CAPTURE_README=1` 才会重拍文档图片。
+E2E 默认使用 API `3102` 和 Web `4173`；端口冲突时可执行 `E2E_API_PORT=43102 E2E_WEB_PORT=44173 npm run e2e`。测试数据库和运行时配置按 API 端口隔离，测试不使用部署数据库。
 
 ---
 

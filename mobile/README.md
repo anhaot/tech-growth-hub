@@ -15,6 +15,4 @@ npm start
 
 本地 ARM64 APK 校验使用 `python3 scripts/verify-apk.py --apk <APK文件> --sdk <SDK目录>`，需保留同次构建生成的 bundle 与 sourcemap。SDK 也可通过 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 设置。升级签名验证要求保留此前版本的校验记录；首次发布基线可明确传入 `--allow-first-release`。校验失败不生成成功结果，`python3 -O` 也会执行全部校验。
 
-隔离预览题库可在安装 API 依赖后，用 `npx tsx scripts/preview-server.mts` 启动。虚拟测试账号为 `preview / Preview12345`，数据保存在临时目录，停止服务后清理，仅用于本机流程预览。
-
 代码验证使用 `npm run typecheck`、`npm run lint`、`npm test`；`npm run test:integration` 使用临时 API 验证登录、学习、AI 与权限隔离；`npm run test:scripts` 用模拟 Android 工具验证 APK 校验脚本。`npm run export:android` 和 `npm run export:web` 检查 JavaScript 打包，不生成可安装 APK。

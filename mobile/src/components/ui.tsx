@@ -404,34 +404,6 @@ export function Chips({
     </ScrollView>
   );
 }
-export function Metadata({
-  question,
-  category,
-}: {
-  question: Question;
-  category?: string;
-}) {
-  return (
-    <View style={styles.wrap}>
-      <Text
-        style={{
-          color: question.difficulty === "hard" ? "#b45309" : colors.primary,
-          backgroundColor: colors.soft,
-          paddingHorizontal: 9,
-          paddingVertical: 4,
-          fontSize: 12,
-          borderRadius: 6,
-        }}
-      >
-        {difficultyLabel[question.difficulty]}
-      </Text>
-      {category && (
-        <Text style={[styles.muted, { paddingVertical: 2 }]}>{category}</Text>
-      )}
-
-    </View>
-  );
-}
 export function QuestionCard({
   question,
   categories,

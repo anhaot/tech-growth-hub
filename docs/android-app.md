@@ -73,8 +73,6 @@ npm run android
 
 可复制 `mobile/.env.example` 为 `mobile/.env`，用 `EXPO_PUBLIC_API_URL` 设置默认服务地址。公开环境变量会进入客户端包，不能放入密码或密钥。浏览器预览跨域访问时，服务端 `ALLOWED_ORIGINS` 需包含预览地址；原生客户端不受浏览器 CORS 限制。
 
-隔离预览服务可在安装 `api/` 和 `mobile/` 依赖后，从 `mobile/` 运行 `npx tsx scripts/preview-server.mts`。虚拟测试账号为 `preview / Preview12345`，数据位于临时目录，停止服务后清理。它仅用于本机流程预览。
-
 键盘控制器需要包含原生模块的开发构建或独立 APK，普通 Expo Go 不足以验证原生键盘行为。浏览器预览可检查布局和接口流程；安卓键盘、返回键、手势、安全区域、离线恢复及系统分享须在模拟器或真机上验证。
 
 ## 构建

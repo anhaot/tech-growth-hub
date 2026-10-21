@@ -2,7 +2,6 @@ import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type { Question } from '../types/index.js';
 
 export interface SimilarPair { left: Question; right: Question; titleScore: number; contentScore: number; score: number }
-export interface DuplicateGroup { title: string; count: number; questions: Question[] }
 export const MAX_DUPLICATE_PAIRS = 10000;
 const normalize = (value: string) => String(value || '').toLowerCase().replace(/[`~!@#$%^&*()_=+[\]{}\\|;:'",.<>/?，。！？；：“”‘’、（）【】《》\s-]/g, '');
 function tokens(value: string): Set<string> {

@@ -24,6 +24,26 @@ __pycache__/
 *.pyc
 *.apk
 *.aab
+coverage/
+.DS_Store
+.idea/
+.vscode/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
 
 # Local deployment presets and internal review records.
 /2026-10-14.json
@@ -32,7 +52,12 @@ __pycache__/
 /docs/deployment-20*.md
 /docs/deployment-aliyun.md
 /docs/*audit*.md
+/docs/verification-*.md
+/docs/current-version.md
+/docs/dependency-status.md
 /docs/images/app-*.png
+/mobile/scripts/preview-server.mts
+/web/e2e/readme-screenshots.spec.ts
 /api/src/scripts/applyQuestionAuditFixes.mjs
 /api/src/scripts/applyExperienceAnswerFixes.ts
 /api/src/scripts/experienceAnswers.ts
